@@ -3,7 +3,7 @@
 #   make            -> luminaserpent.sys (bootable, no Human68k) + luminaserpent.x
 #   make boot       -> luminaserpent.xdf  (disk whose only file is HUMAN.SYS)
 #   make xdisk      -> luminaserpent-x.xdf (Human68k disk, AUTOEXEC runs the .X)
-#   make test       -> luminaserpent-test.xdf (verification build, see README.ja.md)
+#   make test       -> luminaserpent-test.xdf (verification build, see README.md)
 #
 # Toolchain: PATH must include the elf2x68k m68k-xelf/bin directory.
 # The xdf targets need a Human68k 3.02 disk image as a template;

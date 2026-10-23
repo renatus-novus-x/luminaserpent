@@ -1,116 +1,154 @@
+[English](README.en.md) | [日本語](README.md)
+
 # LUMINA SERPENT for X68000
 
-An original horizontal-scrolling shooter for the Sharp X68000, written
-in C++ with the elf2x68k cross toolchain (m68k-xelf-gcc/g++). It boots
-standalone — **no Human68k required**: the game itself is the system
-file (`luminaserpent.sys`, built hellosys-style), placed on the disk as
-`HUMAN.SYS` so the X68000 IPL loads it directly.
+![LUMINA SERPENT teaser](images/teaser.png)
 
-The full Japanese README is in [README.ja.md](README.ja.md).
+**[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
+（この起動リンクは、リポジトリを Public にすると有効になります）
 
-## The game
+elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
+横スクロールSTGです。**Human68k なしで動きます。** 本体はブート可能な
+システムファイル `luminaserpent.sys` で、ディスクに `HUMAN.SYS` として
+置くと X68000 の IPL が直接起動します（breakout と同じ方式）。
 
-Pilot the light-serpent fighter through a stage in deep space, with a
-planet Earth hanging behind the boss. The signature weapon is the
-**Light-Serpent laser**: hold the shot button and steer, and the beam
-follows your flight path like a serpent, shifting color across the
-spectrum — cyan, green, violet, gold — with its curvature. Bending the
-beam charges the RESONANCE gauge; at full charge it erupts into the
-wide, rainbow **PRISM BURST**. At the end of the stage waits the
-**ABYSS PRISM LEVIATHAN**, a crystal boss whose core is shielded by
-four orbiting prism shards — the core cannot be hurt until every shard
-is shattered. Its defeat plays out as a long explosion barrage with a
-rising screen shake, a final blast, and a full-screen whiteout.
+パワーアップは名作STGのゲージ選択式ではなく、種類の分かるアイテムを
+拾って即装備する方式を採用しました。看板システムはすべてオリジナルです。
 
-Power-ups are items dropped by destroyed enemies — fly into one to
-equip it instantly (the bottom strip shows your current loadout):
-**THRUST** (speed up), **COMET** (homing side shots), **DUAL** (twin
-diagonal shots), **PRISM** (the serpent laser), **ECHO** (option
-drones), **HALO** (shield), plus bonus stars.
+## オリジナル要素
 
-## Features
+- **光蛇レーザー（Light Serpent Laser）**
+  発射中のビームは自機の飛行軌跡を距離に応じた遅延でなぞるため、
+  自機を上下させるとビーム全体が蛇のようにしなります。曲がりが強い
+  区間ほど色がシアン→緑→紫→金へスペクトル変化します。
+- **レゾナンス＆PRISM BURST**
+  ビームの曲率の合計が RESONANCE ゲージ（画面上部）に溜まります。
+  満タンになると太い虹色の PRISM ビームに変化し（発射中600フレーム）、
+  威力も上がります。「まっすぐ撃つより、蛇らせて撃つ方が強い」設計です。
+- **プリズム結晶**
+  虹色に輝く結晶型の敵。倒すと虹の輪の爆発とともにレゾナンスが
+  大きく溜まります。
+- **ボス：ABYSS PRISM LEVIATHAN（深淵の虹核）**
+  4個のプリズム片が周回してコアをシールドする結晶体。まず周回の
+  破片を全て壊さないとコアにダメージが通りません。シールド解除後は
+  コアが高速化し、リング弾を放ちます。
+- **宇宙空間と地球の背景**
+  深い宇宙のグラデーション＋淡い星雲＋380個の星空に、画面の
+  約1/3を占める地球（大陸・雲・極冠・大気の縁取り、右下に
+  ターミネーター）。地球は手続き生成した画像をタイル化して
+  埋め込み、起動時は背景キャッシュへの転写のみのため高速。
+  プレイ中の描画負荷も増えません。
+- **デモプレイ（アトラクトモード）**
+  タイトルで約5秒放置すると AI が自動でプレイを始めます。デモ中は
+  被弾しても死なず、アイテムを拾って装備を揃え、ボス破壊→
+  ALL CLEAR→タイトル復帰まで通して再生されます。キーを押せば
+  即座にタイトルへ戻ります。
 
-- 512×480, 65536 colors (CRTMOD 12), CRT controller retimed in the
-  vertical blank to ≈60 Hz; frame pacing locked to the VDISP signal
-  (MFP GPIP) for flicker-free play
-- Everything on screen — ship, options, enemies, boss, bullets,
-  particles, items — is hardware sprites written straight to sprite
-  RAM; the laser alone is drawn into GVRAM (with a static-chain skip
-  and fixed-point runs, a steady beam holds F53–60)
-- Deep-space background: gradient, faint nebulae, 380 stars, and a big
-  Earth (about 1/3 of the screen) with procedural continents, cloud
-  bands, a polar cap and an atmosphere rim. The planet is pre-rendered
-  into a tile on the host (`earth_bg.h`) — generating it on a 68000 at
-  boot took minutes, so the machine only blits it
-- YM2151 (OPM) sound driven directly via IOCS, with three BGM
-  patterns switched by scene: a quiet ambient theme on the title
-  (slow tempo, long floating tones), an active 8th-note arpeggio
-  theme in game, and a driving synthwave boss theme; sound effects
-  and jingles on separate channels
-- Attract mode: leave the title screen alone for about 5 seconds and
-  an AI demo game starts (invincible, can finish the boss; any key
-  returns to the title, demo scores never touch the hi-score)
-- 8×8 dot font: "8x8 ORIGINAL FONT 1 fix" from the MSXPen shared code
-  (https://msxpen.com/codes/-Nq8q6wabU6mJ4onDmYE), glyphs for ASCII
-  0x20–0x7F
-- Keyboard and joystick/joypad (port 1) support
+## 成果物
 
-## Controls
-
-| Input | Action |
+| ファイル | 内容 |
 |---|---|
-| Cursor keys / WASD / joypad | Move |
-| Z / SPACE / pad button (hold) | Shot — hold for the serpent laser |
-| P | Pause |
-| M | Sound on/off |
-| ESC | Back to title (on title: exit) |
+| `luminaserpent.sys` | 本体（ブート用システムバイナリ、94,260 bytes） |
+| `dist/luminaserpent.xdf` | ブート用ディスクイメージ（同梱）。中身は HUMAN.SYS のみ |
+| `luminaserpent.x` | おまけ: Human68k 用 .X 版（同じソースからビルド） |
+| `luminaserpent-test.xdf` | 検証専用: レーザー装備済み＋ボス付近から開始するテスト版 |
 
-## Building
+## 遊び方
 
-Requirements: the elf2x68k toolchain (`m68k-xelf-g++`) on your PATH,
-plus Python 3 for the disk-image scripts.
+`dist/luminaserpent.xdf`（同梱）かビルドした `luminaserpent.xdf` をエミュレータ（WebX68k など）の FDD0 に入れて
+「セットしたディスクで起動」を押すだけです（挿入だけでは起動しません）。
 
-```
-make            # luminaserpent.sys (bootable system) + luminaserpent.x (Human68k .X)
-make boot       # luminaserpent.xdf  — standalone boot disk image
-make xdisk      # luminaserpent-x.xdf — Human68k disk, AUTOEXEC runs the .X
-make test       # luminaserpent-test.xdf — verification build (see README.ja.md)
-```
+## 操作
 
-The `.xdf` targets need a Human68k 3.02 disk image as a template.
-That image is **not** part of this repository — supply your own:
-
-```
-make boot HUMAN68K_XDF=/path/to/human302.xdf
-```
-
-(or pass the path as the third argument to the Python scripts, or set
-the `HUMAN68K_XDF` environment variable.)
-
-The Earth tile `earth_bg.h` is committed, so the game builds as-is.
-To regenerate it (e.g. after changing the background generator), run
-`python3 tools/gen_earth_tile.py` — it compiles `tools/earth_gen.cpp`
-(the game's own background bake) on the host, renders the background,
-and emits the tile header.
-
-## Running
-
-- Emulator: load `luminaserpent.xdf` (2HD, 1,261,568 bytes) as FDD0
-  and boot. In [WebX68k](https://uraraworks.github.io/WebX68k/),
-  insert the image and use the "boot with the inserted disk" button.
-  The title appears after a few seconds (a LOADING… note shows while
-  the background is prepared).
-- Real hardware: write the image to a 2HD floppy and boot from it.
-
-## Files
-
-| File | Description |
+| 入力 | 動作 |
 |---|---|
-| `luminaserpent.cpp` | The whole game (single-file C++) |
-| `earth_bg.h` | Pre-rendered Earth tile (105×105, GRB555) |
-| `Makefile` | Build rules (see above) |
-| `tools/make_boot_xdf.py` | Builds the standalone boot disk (game as HUMAN.SYS) |
-| `tools/make_x_xdf.py` | Builds the Human68k disk with the .X executable |
-| `tools/earth_gen.cpp` | Host build of the background generator (asset tool) |
-| `tools/gen_earth_tile.py` | Renders the background and emits `earth_bg.h` |
-| `README.ja.md` | Japanese README with design and optimization notes |
+| カーソルキー / W A S D / パッド | 自機移動 |
+| Z / SPACE / パッドボタン | ショット（レーザーは押し続け） |
+| P | ポーズ |
+| M | サウンド ON/OFF |
+| ESC | タイトルへ戻る（タイトルでは終了） |
+
+## ルール（アイテム式パワーアップ）
+
+- 特定の敵を倒すと、種類を示す文字タイルのアイテムが落ちます。
+  **体当たりするだけで即装備** されます（ボタン操作は不要）
+  - **T** = THRUST（推進、最大5段）／ **C** = COMET（追尾ミサイル）
+  - **D** = DUAL（2方向射撃）／ **P** = PRISM（光蛇ビーム。
+    DUAL と排他、後から取った方が有効）
+  - **E** = ECHO（軌跡を追う分身、最大2個）
+  - リング型 = HALO（防御フィールド、耐久4）／ 星 = BONUS
+- アイテムは「まだ持っていないパワー」から順番に出るローテーション式で、
+  全装備が揃うとボーナスの星になります
+- 画面下の帯は装備表示です。所持中のパワーが明るく点灯します
+- 被弾すると装備は全て失い、残機が減ります。シールド装備中は被弾を防ぎます
+- ステージを進むと WARNING のあとボス戦。ボスを倒せば ALL CLEAR です
+- ボス撃破時は専用演出：約2秒の爆発連鎖＋画面シェイク→最終爆発→
+  画面全体のホワイトアウト→背景がワイプで復帰→ ALL CLEAR
+
+## 仕様
+
+- 画面: CRTMOD 12 を CRTC 書き換えで 60Hz 化し 512x480 表示
+  （フレーム同期は VDISP ポーリング、失敗時は ONTIME 60Hz
+  ペーシングへ降格）
+- 描画: 自機・敵・弾・ボス等はハードウェアスプライト
+  （パターンは手続き生成54種、位置はスプライトRAMへ直接書き込み）。
+  レーザーだけは GVRAM へ直接描画（前フレーム分は背景キャッシュで
+  復元）。HUD と装備表示は差分更新のみでちらつきなし
+- 文字: MSXPen 共有コード「8x8 ORIGINAL FONT 1 fix」
+  （ASCII 0x20〜0x7F）を組み込み。アイテムの文字タイルもこの
+  フォントから生成しています
+- 言語: C++（単一ファイル、固定長エンティティ配列、sin テーブル）
+- 音: YM2151 (OPM) を IOCS `_iocs_opmset` で直接駆動。
+  BGM はシーンで切り替わる3パターン：タイトルは静かな
+  アンビエント（ゆっくりしたテンポで長く響く浮遊トーン、
+  ベースはフレーズの頭だけ）、ゲーム中（通常面）はアクティブな
+  8分音符コードアルペジオ（Cm add9 → A♭ → E♭ → B♭、ガラス質
+  リード＋毎ステップ刻むオクターブパルスのシンセベース）、
+  ボスは A マイナーのドライヴィングなシンセウェーブ。
+  SE・ジングル付き。
+  スタートジングルは深いルート音から完全5度を積み上げる
+  宇宙的な専用フレーズ（1オクターブ下の同時発音付き）
+- 入力: IOCS `_iocs_b_keysns/_iocs_b_keyinp` ＋ `_iocs_bitsns`
+  （カーソルクラスタのホールド検出、ラッチ方式併用）＋ `_iocs_joyget`
+
+## ビルド
+
+```sh
+export PATH=$HOME/workspace/x68k/m68k-xelf/bin:$PATH
+make            # luminaserpent.sys と luminaserpent.x
+make boot       # luminaserpent.xdf
+make test       # luminaserpent-test.xdf (検証用)
+```
+
+## 動作確認 (2026-10-23, WebX68k)
+
+- タイトル：新フォントでロゴ・全テキスト鮮明、重なり・文字化けなし。
+  クレジット行は削除済み
+- 通常プレイ：開始・4方向移動・射撃・スコア加算・被弾・ポーズ／再開・
+  ESC タイトル復帰まで確認。文字化け・残像・フリッカーなし
+- アイテム：デモプレイで S/M/D/L/O・シールド・星の取得と装備表示の
+  点灯（SPEED 1→2→3、SHIELD 4＋バブル表示など）を実地確認
+- デモ完走：無入力で自動開始し、残機を減らさずにボス戦へ到達。
+  ボス撃破（+10000 ボーナス×2回）と自動タイトル復帰を確認
+  （ALL CLEAR 画面そのものは表示が短く未撮影）
+- ボス戦：無敵テスト版で撃破まで到達し、PRISM BURST の持続発射・
+  太い虹色ビーム・破片＋シールドリングの描画を確認。撃破演出の
+  ホワイトアウト（全画面白）も撮影で確認（爆発連鎖やワイプの
+  各ステップは撮影間隔の都合で個別には未撮影）
+- 性能メモ：ビーム描画は「形状が変わらないフレームは消去・描画を
+  丸ごと省略」＋固定小数点化で最適化済み。WebX68k のベンチ実測で
+  定常ビーム発射中 F53〜60（最適化前は F11〜12）、更新コスト
+  平均 4〜9ms。激しく蛇行させる場面は再描画が要りますが、割り算を
+  区間あたり1回に削減したため従来より軽くなっています
+- 未確認：発音そのものの良し悪し（スタート音含む。検証は画面
+  ベースのため）、ジョイパッド実入力、手動プレイでのアイテム
+  取得シーンの撮影（自動操作では移動と射撃の同時入力ができず
+  到達できなかった。取得処理自体はデモで実証済み）
+- 地球タイル：`earth_bg.h` は `tools/gen_earth_tile.py` で生成
+  （`tools/earth_gen.cpp` が本体の背景生成コードをホスト実行し、
+  地球部分を 105x105 に縮小して GRB555 化したもの）。実機での
+  逐次生成は 68000 には重すぎた（起動が分単位）ため、事前
+  レンダリング＋起動時ブリット方式を採用した
+- 再ビルド一致：`make clean` からの再ビルドで `luminaserpent.sys`
+  (94,260 bytes, MD5 `89c221870b1882cb08729cb337b76fe4`) と XDF
+  (MD5 `bae8cd2f70bbe0856903f8dd12c91844`) がバイト単位で一致
