@@ -1,0 +1,9 @@
+*.o
+*.elf*
+luminaserpent.sys
+luminaserpent.x
+luminaserpent-test.sys
+luminaserpent.xdf
+luminaserpent-test.xdf
+luminaserpent-x.xdf
+__pycache__/
