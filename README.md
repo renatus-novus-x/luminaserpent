@@ -5,7 +5,6 @@
 ![LUMINA SERPENT teaser](images/teaser.png)
 
 **[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
-（この起動リンクは、リポジトリを Public にすると有効になります）
 
 elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 横スクロールSTGです。**Human68k なしで動きます。** 本体はブート可能な
