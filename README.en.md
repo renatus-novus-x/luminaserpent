@@ -5,7 +5,6 @@
 ![LUMINA SERPENT teaser](images/teaser.png)
 
 **[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
-(This launch link becomes active once the repository is made public.)
 
 An original horizontal-scrolling shooter for the Sharp X68000, written
 in C++ with the elf2x68k cross toolchain (m68k-xelf-gcc/g++). It boots
