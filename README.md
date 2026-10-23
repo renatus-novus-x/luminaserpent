@@ -42,9 +42,11 @@ drones), **HALO** (shield), plus bonus stars.
   bands, a polar cap and an atmosphere rim. The planet is pre-rendered
   into a tile on the host (`earth_bg.h`) — generating it on a 68000 at
   boot took minutes, so the machine only blits it
-- YM2151 (OPM) sound driven directly via IOCS: cosmic-drift stage BGM
-  and a driving synthwave boss theme, sound effects and jingles on
-  separate channels
+- YM2151 (OPM) sound driven directly via IOCS, with three BGM
+  patterns switched by scene: a quiet ambient theme on the title
+  (slow tempo, long floating tones), an active 8th-note arpeggio
+  theme in game, and a driving synthwave boss theme; sound effects
+  and jingles on separate channels
 - Attract mode: leave the title screen alone for about 5 seconds and
   an AI demo game starts (invincible, can finish the boss; any key
   returns to the title, demo scores never touch the hi-score)

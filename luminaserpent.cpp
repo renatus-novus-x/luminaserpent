@@ -547,13 +547,27 @@ static Fm g_fm;
 
 
 /* ------------------------------------------------------------------ */
-/* BGM: original patterns, 64 steps. Stage and boss variants.         */
+/* BGM: original patterns, 64 steps. Title (quiet ambient, held      */
+/* tones: -2 = hold the previous note), stage (active arpeggios) and  */
+/* boss (driving synthwave) variants.                                 */
 /* ------------------------------------------------------------------ */
 static const int8_t LEAD_A[64] = {
-  84,-1,-1,-1,79,-1,-1,-1,75,-1,-1,-1,74,-1,-1,-1,
-  84,-1,-1,-1,80,-1,-1,-1,77,-1,-1,-1,75,-1,-1,-1,
-  79,-1,-1,-1,82,-1,-1,-1,87,-1,-1,-1,86,-1,-1,-1,
-  77,-1,-1,-1,74,-1,-1,-1,70,-1,-1,-1,72,-1,-1,-1,
+  72,-1,79,-1,75,-1,79,-1,74,-1,79,-1,75,-1,79,-1,
+  80,-1,77,-1,75,-1,77,-1,79,-1,77,-1,75,-1,72,-1,
+  79,-1,82,-1,79,-1,75,-1,79,-1,86,-1,82,-1,79,-1,
+  77,-1,74,-1,70,-1,74,-1,77,-1,81,-1,77,-1,74,-1,
+};
+static const int8_t LEAD_T[64] = {
+  72,-2,-2,-2,-2,-2,-2,-2,79,-2,-2,-2,-2,-2,-2,-2,
+  77,-2,-2,-2,-2,-2,-2,-2,75,-2,-2,-2,-2,-2,-2,-2,
+  79,-2,-2,-2,-2,-2,-2,-2,82,-2,-2,-2,-2,-2,-2,-2,
+  77,-2,-2,-2,-2,-2,-2,-2,74,-2,-2,-2,-2,-2,-2,-2,
+};
+static const int8_t BASS_T[64] = {
+  36,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-1,-1,-1,-1,
+  32,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-1,-1,-1,-1,
+  39,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-1,-1,-1,-1,
+  34,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-2,-1,-1,-1,-1,
 };
 static const int8_t BASS_A[64] = {
   36,36,48,36,36,48,36,43,36,36,48,36,36,48,36,43,
@@ -1024,7 +1038,7 @@ private:
   bool joy_power_prev_ = false;
 
   /* sound state */
-  bool bgm_on_ = false, boss_music_ = false;
+  bool bgm_on_ = false; int music_ = 2;  /* 0 stage / 1 boss / 2 title */
   int bgm_step_ = 0, bgm_timer_ = 0;
   const JingleNote *jingle_ = nullptr;
   int jingle_idx_ = 0, jingle_timer_ = 0;
@@ -1098,7 +1112,9 @@ private:
     if (!(joy & 0x02)) in.dy = +1;
     if (!(joy & 0x04)) in.dx = -1;
     if (!(joy & 0x08)) in.dx = +1;
-    bool jshot = !(joy & 0x30);
+    /* triggers are bits 4 (A) and 5 (B), active low: shot when
+       EITHER bit is clear (the old !(joy & 0x30) required BOTH). */
+    bool jshot = (joy & 0x30) != 0x30;
     if (jshot) { in.shot = true; in.launch = true; }
     bool jpower = !(joy & 0x40);
     if (jpower && !joy_power_prev_) in.power_edge = true;
@@ -1124,15 +1140,20 @@ private:
       return;
     }
     if (!bgm_on_ || paused_) return;
-    if (++bgm_timer_ < BGM_STEP_FRAMES) return;
+    int frames = (music_ == 2) ? 26 : (music_ == 0) ? 10 : BGM_STEP_FRAMES;
+    if (++bgm_timer_ < frames) return;
     bgm_timer_ = 0;
     int step = bgm_step_; bgm_step_ = (bgm_step_ + 1) & 63;
-    g_fm.note_off(0);
-    int lead = boss_music_ ? LEAD_B[step] : LEAD_A[step];
-    if (lead >= 0) g_fm.note_on(0, lead);
-    g_fm.note_off(1);
-    int bass = boss_music_ ? BASS_B[step] : BASS_A[step];
-    if (bass >= 0) g_fm.note_on(1, bass);
+    int lead = (music_ == 1) ? LEAD_B[step] : (music_ == 2) ? LEAD_T[step] : LEAD_A[step];
+    if (lead != -2) {  /* -2: hold the ringing note */
+      g_fm.note_off(0);
+      if (lead >= 0) g_fm.note_on(0, lead);
+    }
+    int bass = (music_ == 1) ? BASS_B[step] : (music_ == 2) ? BASS_T[step] : BASS_A[step];
+    if (bass != -2) {
+      g_fm.note_off(1);
+      if (bass >= 0) g_fm.note_on(1, bass);
+    }
   }
 
   /* ---------------- HUD / gauge ---------------- */
@@ -1291,7 +1312,7 @@ private:
     demo_mode_ = false; title_idle_ = 0;
     sprites_set_visible(false);
     state_ = State::Title; phase_ = Phase::Normal; paused_ = false;
-    bgm_on_ = true; boss_music_ = false; bgm_step_ = 0; bgm_timer_ = 0;
+    bgm_on_ = true; music_ = 2; bgm_step_ = 0; bgm_timer_ = 0;
     title_cycle_ = 0;
     draw_background();
     draw_title_logo();
@@ -2098,7 +2119,7 @@ private:
     respawn_t_ = 0; shot_cd_ = missile_cd_ = option_cd_ = 0;
     resonance_ = 0; prism_t_ = 0; laser_len_ = 0; laser_n_ = 0;
     scroll_dist_ = 0; next_spawn_dist_ = 240; spawn_idx_ = 0; next_decor_dist_ = 60;
-    phase_ = Phase::Normal; boss_music_ = false;
+    phase_ = Phase::Normal; music_ = 0;
     for (int i = 0; i < HIST_N; i++) { hist_x_[i] = px_; hist_y_[i] = py_; }
     hist_head_ = 0;
     state_ = State::Play; paused_ = false;
@@ -2115,7 +2136,7 @@ private:
     start_jingle(JINGLE_START);
   }
   void start_warn() {
-    phase_ = Phase::Warn; warn_t_ = 190; boss_music_ = true; warn_overlay_ = true;
+    phase_ = Phase::Warn; warn_t_ = 190; music_ = 1; warn_overlay_ = true;
     for (int i = 0; i < 20; i++) if (enemies_[i].active) {
       explode_at(enemies_[i].x, enemies_[i].y, 8, 0); enemies_[i].active = false;
     }
