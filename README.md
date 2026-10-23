@@ -47,7 +47,7 @@ elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 
 | ファイル | 内容 |
 |---|---|
-| `luminaserpent.sys` | 本体（ブート用システムバイナリ、94,260 bytes） |
+| `luminaserpent.sys` | 本体（ブート用システムバイナリ、214,854 bytes） |
 | `dist/luminaserpent.xdf` | ブート用ディスクイメージ（同梱）。中身は HUMAN.SYS のみ |
 | `luminaserpent.x` | おまけ: Human68k 用 .X 版（同じソースからビルド） |
 | `luminaserpent-test.xdf` | 検証専用: レーザー装備済み＋ボス付近から開始するテスト版 |
@@ -96,6 +96,9 @@ elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 - 文字: MSXPen 共有コード「8x8 ORIGINAL FONT 1 fix」
   （ASCII 0x20〜0x7F）を組み込み。アイテムの文字タイルもこの
   フォントから生成しています
+- タイトルロゴ: AI 生成アートを事前レンダリングして埋め込み
+  （`logo_title.h`、`tools/gen_logo_title.py` で GRB555 量子化、
+  黒を透明として背景上にブリット）
 - 言語: C++（単一ファイル、固定長エンティティ配列、sin テーブル）
 - 音: YM2151 (OPM) を IOCS `_iocs_opmset` で直接駆動。
   BGM はシーンで切り替わる3パターン：タイトルは静かな
@@ -149,5 +152,5 @@ make test       # luminaserpent-test.xdf (検証用)
   逐次生成は 68000 には重すぎた（起動が分単位）ため、事前
   レンダリング＋起動時ブリット方式を採用した
 - 再ビルド一致：`make clean` からの再ビルドで `luminaserpent.sys`
-  (94,260 bytes, MD5 `89c221870b1882cb08729cb337b76fe4`) と XDF
-  (MD5 `bae8cd2f70bbe0856903f8dd12c91844`) がバイト単位で一致
+  (214,854 bytes, MD5 `1c3cee935c0e75d9287fbf891f9569e6`) と XDF
+  (MD5 `fdbec07a388ab6c8d164944911a87c67`) がバイト単位で一致

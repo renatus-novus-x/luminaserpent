@@ -21,6 +21,7 @@
 
 #include <x68k/iocs.h>
 #include "earth_bg.h"
+#include "logo_title.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -246,6 +247,20 @@ static void blit_bg_rect(int x1, int y1, int x2, int y2) {
     if (n) *(volatile uint16_t *)d32 = *(const uint16_t *)s32;
   }
 }
+
+/* Pre-rendered title logo (logo_title.h, AI-generated art): keyed
+   blit, 0x0000 = transparent, drawn once per title entry. */
+static void blit_logo_img(int x, int y) {
+  for (int r = 0; r < LOGO_H; r++) {
+    const uint16_t *src = &LOGO_IMG[r * LOGO_W];
+    volatile uint16_t *dst = GVRAM + (y + r) * GV_STRIDE + x;
+    for (int c = 0; c < LOGO_W; c++) {
+      uint16_t v = src[c];
+      if (v) dst[c] = v;
+    }
+  }
+}
+
 
 /* ------------------------------------------------------------------ */
 /* graphics helpers                                                   */
@@ -1292,21 +1307,8 @@ private:
 
   /* ---------------- title ---------------- */
   void draw_title_logo() {
-    restore_bg(40, 62, 472, 210);
-    Gfx::text(83 + 3, 76 + 3, 7, GRB(6, 3, 14), "LUMINA");
-    const char *t1 = "LUMINA";
-    for (int i = 0; t1[i]; i++) {
-      char one[2] = {t1[i], 0};
-      Gfx::text(83 + i * 58, 76, 7, RAINBOW[(i + title_cycle_) % 7], one);
-    }
-    Gfx::text(54 + 3, 140 + 3, 7, GRB(6, 3, 14), "SERPENT");
-    const char *t2 = "SERPENT";
-    for (int i = 0; t2[i]; i++) {
-      char one[2] = {t2[i], 0};
-      Gfx::text(54 + i * 58, 140, 7, RAINBOW[(i + 3 + title_cycle_) % 7], one);
-    }
-    /* prism diamond logo mark */
-    draw_diamond(256, 232, 20, 26, RAINBOW[title_cycle_ % 7], COL_WHITE, frame_);
+    restore_bg(24, 48, 488, 200);
+    blit_logo_img(28, 56);
   }
   void to_title() {
     demo_mode_ = false; title_idle_ = 0;
@@ -2214,7 +2216,6 @@ private:
     sound_update();
     switch (state_) {
       case State::Title: {
-        if ((frame_ % 54) == 0) { title_cycle_++; draw_title_logo(); }
         bool vis = (frame_ % 84) < 55;
         if (vis != press_visible_) { press_visible_ = vis; draw_press(vis); }
         if (in.esc) {

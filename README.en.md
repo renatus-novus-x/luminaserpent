@@ -114,11 +114,13 @@ and emits the tile header.
 |---|---|
 | `luminaserpent.cpp` | The whole game (single-file C++) |
 | `earth_bg.h` | Pre-rendered Earth tile (105×105, GRB555) |
+| `logo_title.h` | Pre-rendered title logo (AI-generated art, GRB555, black = transparent) |
 | `Makefile` | Build rules (see above) |
 | `tools/make_boot_xdf.py` | Builds the standalone boot disk (game as HUMAN.SYS) |
 | `tools/make_x_xdf.py` | Builds the Human68k disk with the .X executable |
 | `tools/earth_gen.cpp` | Host build of the background generator (asset tool) |
 | `tools/gen_earth_tile.py` | Renders the background and emits `earth_bg.h` |
+| `tools/gen_logo_title.py` | Quantizes the title logo art and emits `logo_title.h` |
 | `README.md` | Japanese README (main) with design and optimization notes |
 | `dist/luminaserpent.xdf` | Bootable disk image (included) |
 | `images/teaser.png` | Teaser screenshot |
