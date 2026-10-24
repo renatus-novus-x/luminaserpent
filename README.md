@@ -153,5 +153,5 @@ make test       # luminaserpent-test.xdf (検証用)
   を導入。同一条件のベンチで S1（激しい蛇行）19→34fps、
   S2（PRISM）19→26fps、穏やかな飛行では 53fps を確認
 - 再ビルド一致：`make clean` からの再ビルドで `luminaserpent.sys`
-  (215,658 bytes, MD5 `27526334e0726c496fe4aa9a1d3211ae`) と XDF
-  (MD5 `90323d8cff9447132c327a440377dd35`) がバイト単位で一致
+  (215,658 bytes, MD5 `e853e98dc0934288a4c57cdf9d35e078`) と XDF
+  (MD5 `4957f9399180bd14f2fe43c2b9b09626`) がバイト単位で一致
