@@ -1,10 +1,4 @@
-[English](README.en.md) | [日本語](README.md)
-
 # LUMINA SERPENT for X68000
-
-![LUMINA SERPENT teaser](images/teaser.png)
-
-**[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
 
 elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 横スクロールSTGです。**Human68k なしで動きます。** 本体はブート可能な
@@ -47,14 +41,14 @@ elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 
 | ファイル | 内容 |
 |---|---|
-| `luminaserpent.sys` | 本体（ブート用システムバイナリ、214,854 bytes） |
-| `dist/luminaserpent.xdf` | ブート用ディスクイメージ（同梱）。中身は HUMAN.SYS のみ |
+| `luminaserpent.sys` | 本体（ブート用システムバイナリ、215,658 bytes） |
+| `luminaserpent.xdf` | ブート用ディスクイメージ。中身は HUMAN.SYS のみ |
 | `luminaserpent.x` | おまけ: Human68k 用 .X 版（同じソースからビルド） |
 | `luminaserpent-test.xdf` | 検証専用: レーザー装備済み＋ボス付近から開始するテスト版 |
 
 ## 遊び方
 
-`dist/luminaserpent.xdf`（同梱）かビルドした `luminaserpent.xdf` をエミュレータ（WebX68k など）の FDD0 に入れて
+`luminaserpent.xdf` をエミュレータ（WebX68k など）の FDD0 に入れて
 「セットしたディスクで起動」を押すだけです（挿入だけでは起動しません）。
 
 ## 操作
@@ -134,14 +128,14 @@ make test       # luminaserpent-test.xdf (検証用)
   ボス撃破（+10000 ボーナス×2回）と自動タイトル復帰を確認
   （ALL CLEAR 画面そのものは表示が短く未撮影）
 - ボス戦：無敵テスト版で撃破まで到達し、PRISM BURST の持続発射・
-  太い虹色ビーム・破片＋シールドリングの描画を確認。撃破演出の
+  太い氷青白ビーム・破片＋シールドリングの描画を確認。撃破演出の
   ホワイトアウト（全画面白）も撮影で確認（爆発連鎖やワイプの
   各ステップは撮影間隔の都合で個別には未撮影）
-- 性能メモ：ビーム描画は「形状が変わらないフレームは消去・描画を
-  丸ごと省略」＋固定小数点化で最適化済み。WebX68k のベンチ実測で
-  定常ビーム発射中 F53〜60（最適化前は F11〜12）、更新コスト
-  平均 4〜9ms。激しく蛇行させる場面は再描画が要りますが、割り算を
-  区間あたり1回に削減したため従来より軽くなっています
+- 性能メモ：レーザー描画は帯を細く（通常 3px／PRISM 5px）し、
+  形状が変わらないセグメントの再描画を省略、変化したセグメント
+  は毎フレーム半分ずつ交互に再描画する。WebX68k の自動ベンチ
+  実測（激しい蛇行を持続）で通常レーザー 34fps／PRISM 26fps、
+  穏やかな飛行で 53fps（最適化前はいずれも 19fps）
 - 未確認：発音そのものの良し悪し（スタート音含む。検証は画面
   ベースのため）、ジョイパッド実入力、手動プレイでのアイテム
   取得シーンの撮影（自動操作では移動と射撃の同時入力ができず
@@ -151,6 +145,13 @@ make test       # luminaserpent-test.xdf (検証用)
   地球部分を 105x105 に縮小して GRB555 化したもの）。実機での
   逐次生成は 68000 には重すぎた（起動が分単位）ため、事前
   レンダリング＋起動時ブリット方式を採用した
+- レーザー描画の高速化（2026-10-24）：WebX68k 実測で、激しく
+  蛇行させ続けるとレーザーだけで約 37ms/フレーム（19fps）を
+  消費していた。帯を細く（通常 5→3px、PRISM 7→5px）、PRISM の
+  虹色サイクルを氷青白の固定色に変更し、変化のないセグメントの
+  再描画スキップ＋変化セグメントの交互（インターリーブ）再描画
+  を導入。同一条件のベンチで S1（激しい蛇行）19→34fps、
+  S2（PRISM）19→26fps、穏やかな飛行では 53fps を確認
 - 再ビルド一致：`make clean` からの再ビルドで `luminaserpent.sys`
-  (214,854 bytes, MD5 `1c3cee935c0e75d9287fbf891f9569e6`) と XDF
-  (MD5 `fdbec07a388ab6c8d164944911a87c67`) がバイト単位で一致
+  (215,658 bytes, MD5 `27526334e0726c496fe4aa9a1d3211ae`) と XDF
+  (MD5 `90323d8cff9447132c327a440377dd35`) がバイト単位で一致

@@ -952,11 +952,14 @@ public:
         int mdt = _iocs_ontime().sec - mt0;
         if (mdt < 0) mdt = 0;
         bench_cost_sum_ += mdt; bench_cost_n_++;
+        bench_writes_sum_ += bench_writes_; bench_writes_ = 0;
         if (mdt > bench_cost_max_) bench_cost_max_ = mdt;
         if (bench_cost_n_ >= 240) {
           cost_avg_ms_ = (int)(bench_cost_sum_ * 10 / bench_cost_n_);
           cost_max_ms_ = bench_cost_max_ * 10;
+          writes_avg_ = (int)(bench_writes_sum_ / bench_cost_n_);
           bench_cost_sum_ = 0; bench_cost_n_ = 0; bench_cost_max_ = 0;
+          bench_writes_sum_ = 0;
         }
       }
 #endif
@@ -999,12 +1002,16 @@ private:
   int laser_len_ = 0;
   static constexpr int LASER_SEG = 28, LASER_MAXSEG = 13;
   int laser_x_[LASER_MAXSEG + 1], laser_y_[LASER_MAXSEG + 1], laser_n_ = 0;
-  int prev_laser_x_[LASER_MAXSEG + 1], prev_laser_y_[LASER_MAXSEG + 1], prev_laser_n_ = 0;
   /* beam redraw signature: if the chain, width and color phase are
      unchanged, the pixels already on screen are still correct and
      both the erase and the draw can be skipped entirely. */
-  int sig_x_[LASER_MAXSEG + 1], sig_y_[LASER_MAXSEG + 1];
-  int sig_n_ = -1, sig_hw_ = 0, sig_phase_ = 0, beam_force_ = 0;
+  /* drawn beam state, stored per segment (the exact run painted) */
+  int pseg_x0_[LASER_MAXSEG], pseg_y0_[LASER_MAXSEG];
+  int pseg_x1_[LASER_MAXSEG], pseg_y1_[LASER_MAXSEG];
+  uint16_t pseg_glow_[LASER_MAXSEG], pseg_core_[LASER_MAXSEG];
+  int pseg_n_ = 0, pseg_hw_ = 1;
+  bool pseg_prism_ = false;
+  int beam_force_ = 0;
   int shake_amp_ = 0, shake_ox_ = 0, shake_oy_ = 0;
   int resonance_ = 0, prism_t_ = 0;
 
@@ -1019,7 +1026,6 @@ private:
   int super_ssp_ = -1;
   /* HUD delta tracking */
   int shown_score_ = -1, shown_hi_ = -1, shown_lives_ = -1, shown_res_w_ = -1;
-  int prev_laser_hw_ = 3;
   int shown_prism_ = -1, shown_boss_w_ = -1, shown_boss_sh_ = -1;
   bool shown_eq_[6] = {false, false, false, false, false, false};
   int shown_shield_ = -1, shown_speed_ = -1, shown_options_ = -1;
@@ -1063,6 +1069,8 @@ private:
   int title_idle_ = 0, demo_t_ = 0;
   int bench_frames_ = 0, bench_start_ = 0, fps_val_ = 0;
   long bench_cost_sum_ = 0; int bench_cost_n_ = 0, bench_cost_max_ = 0, cost_avg_ms_ = 0, cost_max_ms_ = 0;
+  long bench_writes_ = 0, bench_writes_sum_ = 0; int writes_avg_ = 0;
+  int bench_scen_ = 1, bench_play_frames_ = 0;
 
   /* timing (same as breakout) */
   bool vsync_ok_ = true;
@@ -1668,6 +1676,29 @@ private:
       option_cd_ = 9;
     }
   }
+#ifdef STG_TEST
+  /* Bench script: hold the laser on and fly a 90<->390 triangle wave
+     (continuous full bending), stage pinned. Scenario 1 = plain laser
+     (resonance pinned to 0), scenario 2 = forced PRISM rendering. */
+  Input bench_script_input() {
+    Input in;
+    bench_scen_ = bench_play_frames_ < 1200 ? 0 : bench_play_frames_ < 3000 ? 1
+                : bench_play_frames_ < 4800 ? 2 : 3;
+    in.shot = bench_scen_ != 0;
+    int ph = bench_play_frames_ % 200;
+    int target = ph < 100 ? 90 + (300 * ph) / 100 : 390 - (300 * (ph - 100)) / 100;
+    if (bench_scen_ == 3) {   /* gentle hover: +-24px, 8 s period */
+      int t2 = bench_play_frames_ % 480;
+      int tri = t2 < 240 ? t2 : 480 - t2;
+      target = 216 + (48 * tri) / 240;
+    }
+    if (py_ < target - 3) in.dy = 1; else if (py_ > target + 3) in.dy = -1;
+    scroll_dist_ = 4700;
+    if (bench_scen_ == 2) prism_t_ = 500; else resonance_ = 0;
+    bench_play_frames_++;
+    return in;
+  }
+#endif
   void update_laser() {
     laser_n_ = 0;
     if (laser_len_ <= 0 || player_dead_) return;
@@ -1877,6 +1908,9 @@ private:
           for (int o = -halfw; o <= halfw; o++) {
             *g = erase ? *b : (o == 0 ? core : glow);
             g += GV_STRIDE; b += SCR_W;
+#ifdef STG_TEST
+            bench_writes_++;
+#endif
           }
         } else {
           if (x < 0 || x >= SCR_W) continue;
@@ -1885,6 +1919,9 @@ private:
             if (yy < 50 || yy >= 432) continue;
             GVRAM[yy * GV_STRIDE + x] =
                 erase ? bg_cache[yy][x] : (o == 0 ? core : glow);
+#ifdef STG_TEST
+            bench_writes_++;
+#endif
           }
         }
       }
@@ -1906,6 +1943,9 @@ private:
           for (int o = -halfw; o <= halfw; o++) {
             *g = erase ? *b : (o == 0 ? core : glow);
             g++; b++;
+#ifdef STG_TEST
+            bench_writes_++;
+#endif
           }
         } else {
           if (y < 50 || y >= 432) continue;
@@ -1914,6 +1954,9 @@ private:
             if (xx < 0 || xx >= SCR_W) continue;
             GVRAM[y * GV_STRIDE + xx] =
                 erase ? bg_cache[y][xx] : (o == 0 ? core : glow);
+#ifdef STG_TEST
+            bench_writes_++;
+#endif
           }
         }
       }
@@ -1924,12 +1967,11 @@ private:
     /* ---- boss-death whiteout cinematic ---- */
     if (phase_ == Phase::BossDying && boss_dying_t_ <= 105 &&
         boss_dying_t_ >= 54) {
-      if (prev_laser_n_ > 0) {   /* clear any stale beam once */
-        for (int i = 0; i < prev_laser_n_; i++)
-          beam_run(prev_laser_x_[i], prev_laser_y_[i],
-                   prev_laser_x_[i + 1], prev_laser_y_[i + 1],
-                   prev_laser_hw_, 0, 0, true);
-        prev_laser_n_ = 0; sig_n_ = -1;
+      if (pseg_n_ > 0) {   /* clear any stale beam once */
+        for (int i = 0; i < pseg_n_; i++)
+          beam_run(pseg_x0_[i], pseg_y0_[i], pseg_x1_[i], pseg_y1_[i],
+                   pseg_hw_, 0, 0, true);
+        pseg_n_ = 0;
       }
       int t = boss_dying_t_;
       if (t >= 94) {          /* white sweep, 40px band per frame */
@@ -1944,58 +1986,81 @@ private:
     }
     /* ---- bending laser on GVRAM (run-based erase + draw) ---- */
     {
-      int halfw = prism_t_ > 0 ? 3 : 2;
-      int phase_col = prism_t_ > 0 ? ((frame_ >> 2) % 7) : -1;
-      bool same = false;
-      if (laser_n_ > 0 && !player_dead_ && beam_force_ == 0 &&
-          laser_n_ == sig_n_ && halfw == sig_hw_ && phase_col == sig_phase_) {
-        same = true;
-        for (int i = 0; i <= laser_n_; i++)
-          if (laser_x_[i] != sig_x_[i] || laser_y_[i] != sig_y_[i]) {
-            same = false; break;
-          }
+      int halfw = prism_t_ > 0 ? 2 : 1;
+      bool prism = prism_t_ > 0;
+      /* A segment is repainted only when its current geometry or
+         color differs from its stored run; changed segments
+         alternate by parity per frame (interleave). Stored runs are
+         per segment -- never a shared polyline -- because adjacent
+         segments share a node yet may be repainted on different
+         frames; erasing one with the other's newer node value would
+         leave permanent residue. */
+      bool beam_on = laser_n_ > 0 && !player_dead_;
+      bool force_all = beam_force_ > 0;
+      bool global_chg = beam_on && (laser_n_ != pseg_n_ ||
+                                    halfw != pseg_hw_ || prism != pseg_prism_);
+      bool seg_draw[LASER_MAXSEG];
+      bool any_draw = false;
+      for (int i = 0; i < LASER_MAXSEG; i++) seg_draw[i] = false;
+      if (beam_on) {
+        for (int i = 0; i < laser_n_; i++) {
+          if (force_all || global_chg) { seg_draw[i] = true; any_draw = true; continue; }
+          int curv = laser_y_[i + 1] - laser_y_[i];
+          if (curv < 0) curv = -curv;
+          uint16_t glow, core;
+          if (prism) { glow = GRB(12, 24, 31); core = COL_WHITE; }
+          else if (curv < 2) { glow = GRB(4, 26, 30); core = GRB(24, 31, 31); }
+          else if (curv < 6) { glow = GRB(6, 30, 14); core = COL_WHITE; }
+          else if (curv < 12) { glow = GRB(28, 8, 28); core = COL_WHITE; }
+          else { glow = GRB(31, 22, 2); core = COL_WHITE; }
+          bool changed = i >= pseg_n_ ||
+                         laser_x_[i] != pseg_x0_[i] || laser_y_[i] != pseg_y0_[i] ||
+                         laser_x_[i + 1] != pseg_x1_[i] || laser_y_[i + 1] != pseg_y1_[i] ||
+                         glow != pseg_glow_[i] || core != pseg_core_[i];
+          if (changed && ((i & 1) == (frame_ & 1))) { seg_draw[i] = true; any_draw = true; }
+        }
       }
-      if (laser_n_ == 0) sig_n_ = -1;
-      if (prev_laser_n_ > 0 && !same) {
-        for (int i = 0; i < prev_laser_n_; i++)
-          beam_run(prev_laser_x_[i], prev_laser_y_[i],
-                   prev_laser_x_[i + 1], prev_laser_y_[i + 1],
-                   prev_laser_hw_, 0, 0, true);
-        restore_bg(prev_laser_x_[prev_laser_n_] - 4,
-                   prev_laser_y_[prev_laser_n_] - 4,
-                   prev_laser_x_[prev_laser_n_] + 4,
-                   prev_laser_y_[prev_laser_n_] + 4);
-        prev_laser_n_ = 0;
+      if (pseg_n_ > 0 && (!beam_on || force_all || global_chg)) {
+        for (int i = 0; i < pseg_n_; i++)
+          beam_run(pseg_x0_[i], pseg_y0_[i], pseg_x1_[i], pseg_y1_[i],
+                   pseg_hw_, 0, 0, true);
+        restore_bg(pseg_x1_[pseg_n_ - 1] - 4, pseg_y1_[pseg_n_ - 1] - 4,
+                   pseg_x1_[pseg_n_ - 1] + 4, pseg_y1_[pseg_n_ - 1] + 4);
+        pseg_n_ = 0;
+      } else if (beam_on && any_draw) {
+        for (int i = 0; i < pseg_n_; i++)
+          if (seg_draw[i])
+            beam_run(pseg_x0_[i], pseg_y0_[i], pseg_x1_[i], pseg_y1_[i],
+                     pseg_hw_, 0, 0, true);
+        if (seg_draw[laser_n_ - 1])
+          restore_bg(pseg_x1_[pseg_n_ - 1] - 4, pseg_y1_[pseg_n_ - 1] - 4,
+                     pseg_x1_[pseg_n_ - 1] + 4, pseg_y1_[pseg_n_ - 1] + 4);
       }
-      if (laser_n_ > 0 && !player_dead_) {
-        if (!same) {
-          for (int i = 0; i < laser_n_; i++) {
-            int curv = laser_y_[i + 1] - laser_y_[i];
-            if (curv < 0) curv = -curv;
-            uint16_t glow, core;
-            if (prism_t_ > 0) { glow = RAINBOW[(i + (frame_ >> 2)) % 7]; core = COL_WHITE; }
-            else if (curv < 2) { glow = GRB(4, 26, 30); core = GRB(24, 31, 31); }
-            else if (curv < 6) { glow = GRB(6, 30, 14); core = COL_WHITE; }
-            else if (curv < 12) { glow = GRB(28, 8, 28); core = COL_WHITE; }
-            else { glow = GRB(31, 22, 2); core = COL_WHITE; }
-            beam_run(laser_x_[i], laser_y_[i], laser_x_[i + 1],
-                     laser_y_[i + 1], halfw, glow, core, false);
-            sig_x_[i] = laser_x_[i]; sig_y_[i] = laser_y_[i];
-          }
-          sig_x_[laser_n_] = laser_x_[laser_n_];
-          sig_y_[laser_n_] = laser_y_[laser_n_];
-          sig_n_ = laser_n_; sig_hw_ = halfw; sig_phase_ = phase_col;
+      if (beam_on && any_draw) {
+        for (int i = 0; i < laser_n_; i++) {
+          if (!seg_draw[i]) continue;
+          int curv = laser_y_[i + 1] - laser_y_[i];
+          if (curv < 0) curv = -curv;
+          uint16_t glow, core;
+          if (prism) { glow = GRB(12, 24, 31); core = COL_WHITE; }
+          else if (curv < 2) { glow = GRB(4, 26, 30); core = GRB(24, 31, 31); }
+          else if (curv < 6) { glow = GRB(6, 30, 14); core = COL_WHITE; }
+          else if (curv < 12) { glow = GRB(28, 8, 28); core = COL_WHITE; }
+          else { glow = GRB(31, 22, 2); core = COL_WHITE; }
+          beam_run(laser_x_[i], laser_y_[i], laser_x_[i + 1],
+                   laser_y_[i + 1], halfw, glow, core, false);
+          pseg_x0_[i] = laser_x_[i]; pseg_y0_[i] = laser_y_[i];
+          pseg_x1_[i] = laser_x_[i + 1]; pseg_y1_[i] = laser_y_[i + 1];
+          pseg_glow_[i] = glow; pseg_core_[i] = core;
+        }
+        if (seg_draw[laser_n_ - 1])
           Gfx::fill(laser_x_[laser_n_] - 2, laser_y_[laser_n_] - 2,
                     laser_x_[laser_n_] + 2, laser_y_[laser_n_] + 2, COL_WHITE);
-        }
-        for (int i = 0; i <= laser_n_; i++) {
-          prev_laser_x_[i] = laser_x_[i]; prev_laser_y_[i] = laser_y_[i];
-        }
-        prev_laser_n_ = laser_n_;
-        prev_laser_hw_ = halfw;
+        pseg_n_ = laser_n_; pseg_hw_ = halfw; pseg_prism_ = prism;
       }
       if (beam_force_ > 0) beam_force_--;
     }
+
     /* ---- WARNING overlay: redraw only on blink state change ---- */
     if (phase_ == Phase::Warn) {
       int b = ((warn_t_ / 18) & 1) == 0 ? 1 : 0;
@@ -2106,8 +2171,7 @@ private:
     for (int i = 0; i < 48; i++) particles_[i].drawn = false;
     for (int i = 0; i < 6; i++) capsules_[i].drawn = false;
     for (int i = 0; i < 4; i++) { decors_[i].drawn = false; shard_drawn_[i] = false; }
-    player_drawn_ = false; boss_drawn_ = false; prev_laser_n_ = 0;
-    sig_n_ = -1;
+    player_drawn_ = false; boss_drawn_ = false; pseg_n_ = 0;
   }
   void start_game() {
     for (int i = 0; i < 20; i++) enemies_[i].active = false;
@@ -2203,6 +2267,9 @@ private:
   /* ---------------- main update ---------------- */
   bool update(Input in) {
     frame_++;
+#ifdef STG_TEST
+    if (state_ == State::Play) in = bench_script_input();
+#endif
     if (demo_mode_ && state_ == State::Play) {
       if (in.dx || in.dy || in.shot || in.power_edge || in.pause_edge ||
           in.esc || in.launch) {
@@ -2312,7 +2379,7 @@ private:
         { int el = _iocs_ontime().sec - bench_start_;
           if (el >= 200) { fps_val_ = bench_frames_ * 100 / el; bench_frames_ = 0; bench_start_ = _iocs_ontime().sec; } }
         if ((frame_ & 7) == 0) {
-          restore_bg(434, 25, 511, 53);
+          restore_bg(434, 25, 511, 67);
           Gfx::text(438, 28, 1, GRB(31, 31, 0), "F");
           Gfx::number(446, 28, 1, GRB(31, 31, 0), fps_val_, 2);
           Gfx::text(472, 28, 1, GRB(31, 31, 0), vsync_ok_ ? "V1" : "V0");
@@ -2320,6 +2387,9 @@ private:
           Gfx::number(446, 41, 1, GRB(31, 31, 0), cost_avg_ms_, 3);
           Gfx::text(476, 41, 1, GRB(31, 31, 0), "X");
           Gfx::number(484, 41, 1, GRB(31, 31, 0), cost_max_ms_, 3);
+          Gfx::text(438, 54, 1, GRB(31, 31, 0), "W");
+          Gfx::number(446, 54, 1, GRB(31, 31, 0), writes_avg_, 4);
+          Gfx::text(484, 54, 1, GRB(31, 31, 0), bench_scen_ == 0 ? "S0" : bench_scen_ == 2 ? "S2" : bench_scen_ == 3 ? "S3" : "S1");
         }
 #endif
         break;

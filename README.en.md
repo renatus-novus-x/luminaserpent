@@ -41,8 +41,11 @@ drones), **HALO** (shield), plus bonus stars.
   (MFP GPIP) for flicker-free play
 - Everything on screen — ship, options, enemies, boss, bullets,
   particles, items — is hardware sprites written straight to sprite
-  RAM; the laser alone is drawn into GVRAM (with a static-chain skip
-  and fixed-point runs, a steady beam holds F53–60)
+  RAM; the laser alone is drawn into GVRAM (slim 3 px band, 5 px in
+  PRISM with a fixed icy blue-white palette; segments whose drawn
+  pixels are unchanged are skipped and changed segments are
+  repainted in interleave — 34 fps under a sustained hard-bend
+  stress test on WebX68k, 53 fps in gentle flight)
 - Deep-space background: gradient, faint nebulae, 380 stars, and a big
   Earth (about 1/3 of the screen) with procedural continents, cloud
   bands, a polar cap and an atmosphere rim. The planet is pre-rendered
