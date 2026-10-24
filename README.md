@@ -1,4 +1,10 @@
+[English](README.en.md) | [日本語](README.md)
+
 # LUMINA SERPENT for X68000
+
+![LUMINA SERPENT teaser](images/teaser.png)
+
+**[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
 
 elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 横スクロールSTGです。**Human68k なしで動きます。** 本体はブート可能な
