@@ -22,7 +22,7 @@ planet Earth hanging behind the boss. The signature weapon is the
 follows your flight path like a serpent, shifting color across the
 spectrum — cyan, green, violet, gold — with its curvature. Bending the
 beam charges the RESONANCE gauge; at full charge it erupts into the
-wide, rainbow **PRISM BURST**. At the end of the stage waits the
+wide, blue-white **PRISM BURST**. At the end of the stage waits the
 **ABYSS PRISM LEVIATHAN**, a crystal boss whose core is shielded by
 four orbiting prism shards — the core cannot be hurt until every shard
 is shattered. Its defeat plays out as a long explosion barrage with a
@@ -41,11 +41,15 @@ drones), **HALO** (shield), plus bonus stars.
   (MFP GPIP) for flicker-free play
 - Everything on screen — ship, options, enemies, boss, bullets,
   particles, items — is hardware sprites written straight to sprite
-  RAM; the laser alone is drawn into GVRAM (slim 3 px band, 5 px in
-  PRISM with a fixed icy blue-white palette; segments whose drawn
-  pixels are unchanged are skipped and changed segments are
-  repainted in interleave — 34 fps under a sustained hard-bend
-  stress test on WebX68k, 53 fps in gentle flight)
+  RAM; the laser alone is drawn into GVRAM (slim 3 px band;
+  segments whose drawn pixels are unchanged are skipped and
+  changed segments are repainted in interleave — 34 fps under a
+  sustained hard-bend stress test on WebX68k, 53 fps in gentle
+  flight). During PRISM BURST the beam switches to hardware
+  sprites: layered gradient band tiles (48 px cross-section,
+  horizontally uniform so there is no beaded look) with a flowing
+  streak and a muzzle flare — zero GVRAM writes, 53 fps even in
+  the PRISM stress test
 - Deep-space background: gradient, faint nebulae, 380 stars, and a big
   Earth (about 1/3 of the screen) with procedural continents, cloud
   bands, a polar cap and an atmosphere rim. The planet is pre-rendered
