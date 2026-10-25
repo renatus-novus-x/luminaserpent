@@ -858,12 +858,66 @@ static int idx_item_star(int x, int y) {
   return 0;
 }
 
+/* PRISM sprite beam (AURORA STREAM): the cross-section shade depends
+   only on the distance from the beam axis, so the band tiles are
+   horizontally uniform and tile seamlessly -- no beaded look.
+   The blue-white ramp lives in palette block 15, indices 8-14
+   (8 light blue, 9 white, 10 faint deep, 11 pale cyan, 12 mid,
+   13 deep, 14 near-white) -- block 0 turned out not to retain
+   _iocs_spalet writes under WebX68k (it showed the system default
+   palette instead), so it must not be used. Shade-boundary rows
+   dither between neighbours to fake intermediate levels. */
+static int beam_shade(int r, int x, int y) {
+  int a = r < 0 ? -r : r;
+  bool dith = ((x + y) & 1) != 0;
+  if (a <= 3) return 9;
+  if (a <= 5) return 14;
+  if (a == 6) return dith ? 14 : 11;
+  if (a <= 9) return 11;
+  if (a == 10) return dith ? 11 : 8;
+  if (a <= 13) return 8;
+  if (a == 14) return dith ? 8 : 12;
+  if (a <= 17) return 12;
+  if (a == 18) return dith ? 12 : 13;
+  if (a <= 21) return 13;
+  return dith ? 10 : 0;
+}
+static int idx_beam_t(int x, int y) { return beam_shade(y - 24, x, y); }
+static int idx_beam_m(int x, int y) { return beam_shade(y - 8, x, y); }
+static int idx_beam_b(int x, int y) { return beam_shade(y + 8, x, y); }
+/* flowing inner streak: a soft bright wave, tapered at the tile
+   edges so consecutive tiles read as one river of light */
+static int beam_streak(int x, int y, int ph) {
+  int wob = (((x + ph * 8) >> 3) & 1) == 0 ? -2 : 2;
+  int dy = y - 8 - wob;
+  if (dy < -2 || dy > 2) return 0;
+  bool edge = x < 3 || x > 12;
+  if (dy == 0) return edge ? 14 : 9;
+  if (dy == -1 || dy == 1) return edge ? 0 : 14;
+  return 0;
+}
+static int idx_beam_s0(int x, int y) { return beam_streak(x, y, 0); }
+static int idx_beam_s1(int x, int y) { return beam_streak(x, y, 1); }
+/* muzzle flare: one radial quadrant (bright corner at 15,15),
+   mirrored into a 32x32 glow by the flip bits at put time */
+static int idx_flare(int x, int y) {
+  int dx = 15 - x, dy = 15 - y, d2 = dx * dx + dy * dy;
+  if (d2 <= 9) return 9;
+  if (d2 <= 36) return 14;
+  if (d2 <= 81) return 11;
+  if (d2 <= 144) return ((x + y) & 1) ? 8 : 11;
+  if (d2 <= 225) return ((x + y) & 1) ? 12 : 0;
+  return 0;
+}
+
 enum {
   PAT_SHIP_L = 0, PAT_SHIP_R = 1, PAT_SHIP_LF = 2, PAT_SHIP_RF = 3,
   PAT_OPTION = 4, PAT_FAN = 5, PAT_WEAVER = 6, PAT_ORB = 7, PAT_DART = 8,
   PAT_CAPSULE = 9, PAT_PBUL = 10, PAT_EBUL = 11, PAT_MISSILE = 12,
   PAT_SPARK = 13, PAT_CRY = 14, PAT_CAR = 18, PAT_BOSS = 24,
-  PAT_SHARD = 40, PAT_SHIELD = 41, PAT_ITEM = 47
+  PAT_SHARD = 40, PAT_SHIELD = 41, PAT_ITEM = 47,
+  PAT_BEAM_T = 54, PAT_BEAM_M = 55, PAT_BEAM_B = 56,
+  PAT_BEAM_S0 = 57, PAT_BEAM_S1 = 58, PAT_FLARE = 59
 };
 
 static void build_pat16(uint8_t *out, PatFn fn) {
@@ -883,6 +937,9 @@ static void build_pat16(uint8_t *out, PatFn fn) {
 
 struct PalDef { int idx, block; uint16_t c; };
 static const PalDef PAL_DEFS[] = {
+  {8,15,GRB(11,21,30)},{9,15,GRB(31,31,31)},{10,15,GRB(4,9,20)},
+  {11,15,GRB(20,26,28)},{12,15,GRB(7,16,29)},{13,15,GRB(5,12,26)},
+  {14,15,GRB(26,30,31)},
   {1,1,GRB(10,22,30)},{2,1,GRB(26,31,31)},{3,1,GRB(6,10,26)},
   {4,1,GRB(31,12,20)},{5,1,GRB(31,18,2)},{6,1,GRB(6,14,22)},{7,1,GRB(31,26,6)},
   {1,2,GRB(28,10,6)},{2,2,GRB(31,31,31)},{3,2,GRB(20,5,9)},
@@ -1430,6 +1487,18 @@ private:
     _iocs_sp_defcg((PAT_ITEM + 5) * 4, 1, pat);
     build_pat16(pat, idx_item_star);
     _iocs_sp_defcg((PAT_ITEM + 6) * 4, 1, pat);
+    build_pat16(pat, idx_beam_t);
+    _iocs_sp_defcg(PAT_BEAM_T * 4, 1, pat);
+    build_pat16(pat, idx_beam_m);
+    _iocs_sp_defcg(PAT_BEAM_M * 4, 1, pat);
+    build_pat16(pat, idx_beam_b);
+    _iocs_sp_defcg(PAT_BEAM_B * 4, 1, pat);
+    build_pat16(pat, idx_beam_s0);
+    _iocs_sp_defcg(PAT_BEAM_S0 * 4, 1, pat);
+    build_pat16(pat, idx_beam_s1);
+    _iocs_sp_defcg(PAT_BEAM_S1 * 4, 1, pat);
+    build_pat16(pat, idx_flare);
+    _iocs_sp_defcg(PAT_FLARE * 4, 1, pat);
   }
   void sprites_set_visible(bool on) {
     if (on == sprites_on_) return;
@@ -1441,12 +1510,14 @@ private:
      0xEB0000 + no*8 = {x+16, y+16-6, code|(pal<<8)|flip, priority}.
      The -6 compensates the sprite plane offset under the retimed
      CRTC (512x480), measured the same way. */
-  void sp_put(int x, int y, int pat, int pal, bool hflip = false) {
+  void sp_put(int x, int y, int pat, int pal, bool hflip = false,
+              bool vflip = false) {
     if (sp_cursor_ >= 128) return;
     volatile uint16_t *sp = (volatile uint16_t *)(0xEB0000UL + sp_cursor_ * 8);
     sp[0] = (uint16_t)(x + 16 + shake_ox_);
     sp[1] = (uint16_t)(y + 16 - 6 + shake_oy_);
-    sp[2] = (uint16_t)(pat * 4 | (pal << 8) | (hflip ? 0x4000 : 0));
+    sp[2] = (uint16_t)(pat * 4 | (pal << 8) | (hflip ? 0x4000 : 0) |
+                       (vflip ? 0x8000 : 0));
     sp[3] = 3;
     sp_cursor_++;
   }
@@ -1988,6 +2059,20 @@ private:
     {
       int halfw = prism_t_ > 0 ? 2 : 1;
       bool prism = prism_t_ > 0;
+      if (prism && laser_n_ > 0 && !player_dead_) {
+        /* PRISM is rendered with hardware sprites in the sprite pass
+           (AURORA STREAM); erase the GVRAM beam once and keep GVRAM
+           free of beam writes for as long as PRISM lasts. */
+        if (pseg_n_ > 0) {
+          for (int i = 0; i < pseg_n_; i++)
+            beam_run(pseg_x0_[i], pseg_y0_[i], pseg_x1_[i], pseg_y1_[i],
+                     pseg_hw_, 0, 0, true);
+          restore_bg(pseg_x1_[pseg_n_ - 1] - 4, pseg_y1_[pseg_n_ - 1] - 4,
+                     pseg_x1_[pseg_n_ - 1] + 4, pseg_y1_[pseg_n_ - 1] + 4);
+          pseg_n_ = 0;
+        }
+        if (beam_force_ > 0) beam_force_--;
+      } else {
       /* A segment is repainted only when its current geometry or
          color differs from its stored run; changed segments
          alternate by parity per frame (interleave). Stored runs are
@@ -2059,6 +2144,7 @@ private:
         pseg_n_ = laser_n_; pseg_hw_ = halfw; pseg_prism_ = prism;
       }
       if (beam_force_ > 0) beam_force_--;
+      }
     }
 
     /* ---- WARNING overlay: redraw only on blink state change ---- */
@@ -2102,6 +2188,40 @@ private:
         int ox, oy;
         hist_at(14 * (o + 1), ox, oy);
         sp_put(ox - 8, oy - 8, PAT_OPTION, 12);
+      }
+    }
+    /* ---- PRISM beam on hardware sprites (AURORA STREAM): layered
+       gradient band tiles follow the laser polyline -- muzzle flare,
+       then per column a flowing streak + the 3-tile cross-section
+       (48px). No GVRAM writes; sprite priority puts the beam behind
+       the ship but in front of enemies and the boss. ---- */
+    if (prism_t_ > 0 && laser_n_ > 0 && !player_dead_) {
+      int nx = laser_x_[0], ny = laser_y_[0];
+      sp_put(nx - 16, ny - 16, PAT_FLARE, 15);
+      sp_put(nx, ny - 16, PAT_FLARE, 15, true);
+      sp_put(nx - 16, ny, PAT_FLARE, 15, false, true);
+      sp_put(nx, ny, PAT_FLARE, 15, true, true);
+      int bpx[128], bpy[128], bn = 0;
+      for (int i = 0; i < laser_n_ && bn < 120; i++) {
+        int x0 = laser_x_[i], y0 = laser_y_[i];
+        int dx = laser_x_[i + 1] - x0, dy = laser_y_[i + 1] - y0;
+        int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+        int steps = (adx + ady) / 4; if (steps < 1) steps = 1;
+        for (int k = (i == 0 ? 0 : 1); k <= steps && bn < 128; k++) {
+          bpx[bn] = x0 + dx * k / steps;
+          bpy[bn] = y0 + dy * k / steps;
+          bn++;
+        }
+      }
+      for (int j = 2, col = 0; j < bn; j += 4, col++) {
+        if (sp_cursor_ < 96) {
+          int oy = (sin64((col * 7 + (frame_ << 1)) & 63) * 3) >> 8;
+          sp_put(bpx[j] - 8, bpy[j] - 8 + oy,
+                 ((col + (frame_ >> 2)) & 1) ? PAT_BEAM_S1 : PAT_BEAM_S0, 15);
+        }
+        sp_put(bpx[j] - 8, bpy[j] - 24, PAT_BEAM_T, 15);
+        sp_put(bpx[j] - 8, bpy[j] - 8, PAT_BEAM_M, 15);
+        sp_put(bpx[j] - 8, bpy[j] + 8, PAT_BEAM_B, 15);
       }
     }
     {
