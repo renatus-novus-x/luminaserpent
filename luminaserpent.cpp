@@ -658,20 +658,52 @@ static void draw_diamond(int cx, int cy, int rx, int ry, uint16_t c_main, uint16
 static int PAT_OX = 0, PAT_OY = 0;
 static int iabs_(int v) { return v < 0 ? -v : v; }
 
-static int ship_g(int sx, int y, bool shortflame) {
-  if ((y == 7 || y == 8) && sx < (shortflame ? 2 : 4)) return 5;
-  if (y >= 6 && y <= 9 && sx >= 3 && sx <= 29) {
-    if (sx >= 27) return 2;
-    if (sx >= 18 && sx <= 22 && y >= 7 && y <= 8) return 4;
-    if (y == 6) return 2;
-    if (y == 9) return 6;
-    return 1;
+/* VIPER FACET ship (design board A, chosen 2026-10-27): the hull is a
+   set of flat-shaded facets lit from the upper left, sampled at pixel
+   centres exactly like the host-side design board. Facet index map
+   (palette block 1): 1 mid steel, 8 light steel, 2 specular white,
+   6 dark steel, 3 darkest (engine/fins), 4 cyan glass canopy,
+   5/7 flame. Painter order is checked in reverse. */
+static bool in_poly(int px, int py, const int8_t *poly, int n) {
+  // pixel-centre test in doubled integer space (no division)
+  int x = px * 2 + 1, y = py * 2 + 1;
+  bool inside = false;
+  for (int i = 0, j = n - 1; i < n; j = i++) {
+    int xi = poly[i * 2] * 2, yi = poly[i * 2 + 1] * 2;
+    int xj = poly[j * 2] * 2, yj = poly[j * 2 + 1] * 2;
+    if ((yi > y) == (yj > y)) continue;
+    int dy = yj - yi, dx = xj - xi;
+    bool cross = (dy > 0) ? ((x - xi) * dy < (y - yi) * dx)
+                          : ((x - xi) * dy > (y - yi) * dx);
+    if (cross) inside = !inside;
   }
-  if (y >= 2 && y <= 5) { int span = 3 + (y - 2) * 3;
-    if (sx >= 15 - span && sx <= 15) return y == 2 ? 2 : 3; }
-  if (y >= 10 && y <= 13) { int span = 3 + (13 - y) * 3;
-    if (sx >= 15 - span && sx <= 15) return 3; }
-  if ((y == 5 || y == 10) && sx >= 3 && sx <= 5) return 3;
+  return inside;
+}
+static int ship_g(int sx, int y, bool shortflame) {
+  static const int8_t SIL[] = {2,6, 6,4, 14,3, 22,4, 31,7, 31,8, 22,11, 14,12, 6,11, 2,9};
+  static const int8_t TOPF[] = {2,6, 6,4, 14,3, 22,4, 26,6, 14,6, 6,6};
+  static const int8_t NOSE[] = {22,4, 31,7, 31,8, 22,9, 20,7};
+  static const int8_t BELLY[] = {6,9, 14,9, 26,8, 22,11, 14,12, 6,11};
+  static const int8_t ENG[] = {2,6, 6,6, 6,9, 2,9};
+  static const int8_t FINT[] = {5,4, 8,1, 10,1, 11,4};
+  static const int8_t FINL[] = {5,4, 8,1, 9,2, 7,4};
+  static const int8_t FINB[] = {4,11, 8,14, 11,14, 12,11};
+  static const int8_t CANOPY[] = {15,5, 21,5, 23,7, 21,8, 16,8, 14,6};
+  if (y == 7 || y == 8) {  // exhaust flame (flickers via shortflame)
+    if (!shortflame && sx <= 1) return (sx == 1 && y == 7) ? 7 : 5;
+    if (shortflame && sx == 0) return 5;
+  }
+  if (sx == 30 && y == 7) return 2;   // nose tip specular
+  if (sx == 19 && y == 6) return 2;   // canopy specular
+  if (in_poly(sx, y, CANOPY, 6)) return 4;
+  if (in_poly(sx, y, FINB, 4)) return 3;
+  if (in_poly(sx, y, FINL, 4)) return 8;
+  if (in_poly(sx, y, FINT, 4)) return 6;
+  if (in_poly(sx, y, ENG, 4)) return 3;
+  if (in_poly(sx, y, BELLY, 6)) return 6;
+  if (in_poly(sx, y, NOSE, 5)) return 2;
+  if (in_poly(sx, y, TOPF, 7)) return 8;
+  if (in_poly(sx, y, SIL, 10)) return 1;
   return 0;
 }
 static int idx_ship_l(int x, int y)  { return ship_g(x, y, false); }
@@ -686,41 +718,88 @@ static int idx_option(int x, int y) {
   return 3;
 }
 static int idx_fan(int x, int y) {
-  int dx = x - 7, dy = y - 7;
-  if (y >= 1 && y <= 5 && x >= 9 && x <= 14 && x >= 4 + y) return 3;
-  if (y >= 10 && y <= 14 && x >= 9 && x <= 14 && x >= 19 - y) return 3;
-  if (y >= 6 && y <= 9 && x >= 2 && x <= 13) {
-    if (x <= 3) return 2;
-    if (dx * dx + dy * dy <= 4) return 4;
-    if (y == 6) return 2;
-    return 1;
-  }
+  // FACET MACHINE (design board A): faceted rotor housing, lit from NW.
+  // Indices (block 2): 1 body, 7 light facet, 2 specular, 3 dark,
+  // 6 darkest, 4 core, 5 exhaust.
+  static const int8_t OCT[] = {8,0, 12,1, 15,4, 15,11, 12,14, 8,15, 3,14, 0,11, 0,4, 3,1};
+  static const int8_t TOPF[] = {8,0, 12,1, 15,4, 8,8, 4,4};
+  static const int8_t NWS[] = {0,4, 3,1, 8,0, 4,4};
+  static const int8_t RF[] = {15,4, 15,11, 8,8};
+  static const int8_t BELLY[] = {8,8, 15,11, 12,14, 8,15, 3,14, 0,11};
+  static const int8_t BLN[] = {8,2, 9,6, 8,7, 7,6};
+  static const int8_t BLSE[] = {13,11, 10,9, 9,8, 11,7};
+  static const int8_t BLSW[] = {2,11, 5,9, 6,8, 4,7};
   if ((y == 7 || y == 8) && x >= 14) return 5;
+  if (x == 7 && y == 7) return 2;
+  { int dx = 2 * x - 14, dy = 2 * y - 14; if (dx * dx + dy * dy <= 19) return 4; }
+  if (in_poly(x, y, BLSW, 4)) return 6;
+  if (in_poly(x, y, BLSE, 4)) return 3;
+  if (in_poly(x, y, BLN, 4)) return 3;
+  if (in_poly(x, y, BELLY, 6)) return 6;
+  if (in_poly(x, y, RF, 3)) return 3;
+  if (in_poly(x, y, NWS, 4)) return 2;
+  if (in_poly(x, y, TOPF, 5)) return 7;
+  if (in_poly(x, y, OCT, 10)) return 1;
   return 0;
 }
 static int idx_weaver(int x, int y) {
-  int dx = x - 8, dy = y - 8, ad = iabs_(dx) + iabs_(dy);
-  if (ad > 7) return 0;
-  if (ad <= 3) return 4;
-  if (ad >= 6) return 3;
-  if (dx < 0 && dy < 0) return 2;
-  return 1;
+  // FACET MACHINE (design board A): octahedron facets, lit from W.
+  // Indices (block 3): 1 body, 2 light facet/specular, 3 dark,
+  // 6 darkest, 4 core.
+  static const int8_t DIA[] = {8,0, 15,8, 8,15, 0,8};
+  static const int8_t EF[] = {8,0, 15,8, 8,8};
+  static const int8_t WF[] = {8,0, 0,8, 8,8};
+  static const int8_t SWF[] = {0,8, 8,15, 8,8};
+  static const int8_t SEF[] = {15,8, 8,15, 8,8};
+  static const int8_t RING[] = {8,3, 11,8, 8,12, 5,8};
+  static const int8_t CORE[] = {8,5, 10,8, 8,10, 6,8};
+  if (x == 7 && y == 4) return 2;
+  if (in_poly(x, y, CORE, 4)) return 4;
+  if (in_poly(x, y, RING, 4)) return 2;
+  if (in_poly(x, y, SEF, 3)) return 6;
+  if (in_poly(x, y, SWF, 3)) return 3;
+  if (in_poly(x, y, WF, 3)) return 2;
+  if (in_poly(x, y, EF, 3)) return 3;
+  if (in_poly(x, y, DIA, 4)) return 1;
+  return 0;
 }
 static int idx_orb(int x, int y) {
-  int dx = x - 8, dy = y - 8, d2 = dx * dx + dy * dy;
-  if ((y == 7 || y == 8) && x <= 1) return 3;
-  if (d2 <= 49) {
-    if (d2 <= 4) return 4;
-    if (dx <= -3 && dy <= -3) return 2;
-    if (d2 >= 37) return 3;
-    return 1;
-  }
+  // FACET MACHINE (design board A): low-poly sphere facets.
+  // Indices (block 4): 1 body, 2 light facet, 8 specular, 3 dark,
+  // 6 darkest, 7 centre facet, 4 core gem.
+  static const int8_t TLF[] = {3,2, 8,1, 9,5, 5,6, 2,5};
+  static const int8_t LF[] = {2,5, 5,6, 6,10, 3,11, 1,8};
+  static const int8_t BOTF[] = {6,10, 9,5, 13,6, 12,12, 7,13, 3,11};
+  static const int8_t CENF[] = {5,6, 9,5, 10,9, 6,10};
+  static const int8_t GEM[] = {7,6, 9,7, 7,9, 5,7};
+  if (x == 4 && y == 3) return 8;
+  if (in_poly(x, y, GEM, 4)) return 4;
+  if (in_poly(x, y, CENF, 4)) return 7;
+  if (in_poly(x, y, BOTF, 6)) return 6;
+  if (in_poly(x, y, LF, 5)) return 3;
+  if (in_poly(x, y, TLF, 5)) return 2;
+  { int dx = 2 * x - 14, dy = 2 * y - 14; if (dx * dx + dy * dy <= 207) return 1; }
   return 0;
 }
 static int idx_dart(int x, int y) {
-  if (y >= 7 && y <= 8 && x >= 1 && x <= 14) return x <= 2 ? 2 : 1;
-  if (y >= 5 && y <= 6 && x >= 11 && x <= 14) return 3;
-  if (y >= 9 && y <= 10 && x >= 11 && x <= 14) return 3;
+  // FACET MACHINE (design board A): faceted arrowhead.
+  // Indices (block 7): 1 body, 5 light facet, 2 specular, 6 dark,
+  // 3 darkest. (Block 7 is shared with the crystal CPAL rotation and
+  // the THRUST item; only dart reads 3/6 among them, so no palette
+  // entries needed changing.)
+  static const int8_t BODY[] = {1,6, 8,5, 15,7, 15,8, 8,10, 1,9};
+  static const int8_t TOPF[] = {1,6, 8,5, 15,7, 9,7, 3,7};
+  static const int8_t BELLY[] = {9,7, 15,7, 15,8, 8,10, 3,8};
+  static const int8_t NOSE[] = {11,5, 15,7, 12,7, 10,6};
+  static const int8_t FINT[] = {2,5, 5,2, 7,5};
+  static const int8_t FINB[] = {2,10, 5,13, 7,10};
+  if (x == 13 && y == 7) return 2;
+  if (in_poly(x, y, FINB, 3)) return 3;
+  if (in_poly(x, y, FINT, 3)) return 6;
+  if (in_poly(x, y, NOSE, 4)) return 2;
+  if (in_poly(x, y, BELLY, 5)) return 6;
+  if (in_poly(x, y, TOPF, 5)) return 5;
+  if (in_poly(x, y, BODY, 6)) return 1;
   return 0;
 }
 static int idx_capsule(int x, int y) {
@@ -757,51 +836,105 @@ static int idx_spark(int x, int y) {
   return 0;
 }
 static int idx_cry_t(int x, int y) {
+  // FACET MACHINE (design board A): hard-faceted diamond. Indices are
+  // semantic (1 body, 2 white, 3 dark, 4 core, 5 light facet, 6 shade)
+  // so the design survives the CPAL {5,6,7} phase rotation unchanged.
+  static const int8_t DIA[] = {16,0, 31,16, 16,31, 0,16};
+  static const int8_t EF[] = {16,0, 31,16, 16,16};
+  static const int8_t WF[] = {16,0, 0,16, 16,16};
+  static const int8_t SWF[] = {0,16, 16,31, 16,16};
+  static const int8_t SEF[] = {31,16, 16,31, 16,16};
+  static const int8_t RING[] = {16,7, 23,16, 16,24, 9,16};
+  static const int8_t CORE[] = {16,11, 20,16, 16,20, 12,16};
   int gx = x + PAT_OX, gy = y + PAT_OY;
-  int dx = gx - 16, dy = gy - 16, ad = iabs_(dx) + iabs_(dy);
-  if (ad > 15) return 0;
-  if (ad >= 14) return 3;
-  if (ad <= 3) return 4;
-  if (dx < 0 && dy < 0) return 2;
-  if (dx == 0 || dy == 0) return 6;
-  return 1;
+  if ((gx == 13 && gy == 9) || (gx == 15 && gy == 14)) return 2;
+  if (in_poly(gx, gy, CORE, 4)) return 4;
+  if (in_poly(gx, gy, RING, 4)) return 5;
+  if (in_poly(gx, gy, SEF, 3)) return 6;
+  if (in_poly(gx, gy, SWF, 3)) return 3;
+  if (in_poly(gx, gy, WF, 3)) return 5;
+  if (in_poly(gx, gy, EF, 3)) return 3;
+  if (in_poly(gx, gy, DIA, 4)) return 1;
+  return 0;
 }
 static int idx_car_t(int x, int y) {
+  // FACET MACHINE (design board A): armoured hull facets, gem core.
+  // Indices (block 8): 1 body, 8 light facet, 2 nose specular,
+  // 3 dark, 6 darkest, 4 core gem, 9 core light, 7 panel lights,
+  // 5 exhaust.
+  static const int8_t HULL[] = {4,10, 16,8, 34,8, 44,12, 47,15, 47,16, 44,20, 34,23, 16,23, 4,21, 1,16, 1,15};
+  static const int8_t DECK[] = {4,10, 16,8, 34,8, 44,12, 47,15, 24,15, 10,13};
+  static const int8_t NOSE[] = {34,8, 44,12, 47,15, 47,16, 44,20, 36,17, 30,12};
+  static const int8_t BELLY[] = {10,17, 24,17, 44,20, 34,23, 16,23, 4,21, 1,16};
+  static const int8_t REAR[] = {4,10, 10,13, 10,17, 4,21, 1,16, 1,15};
+  static const int8_t PODT[] = {36,2, 43,2, 44,8, 35,8};
+  static const int8_t PODB[] = {36,23, 43,23, 44,29, 35,29};
+  static const int8_t GEM[] = {21,12, 27,12, 29,16, 27,19, 21,19, 19,16};
   int gx = x + PAT_OX, gy = y + PAT_OY;
-  if ((gy == 15 || gy == 16) && gx <= 3) return 5;
-  if (gx >= 4 && gx <= 44 && gy >= 10 && gy <= 21) {
-    int dx = gx - 24, dy = gy - 16, d2 = dx * dx + dy * dy;
-    if (d2 <= 16) return d2 <= 4 ? 2 : 4;
-    if (gy == 10) return 2;
-    if (gy >= 20) return 6;
-    if ((gx % 9) == 0 && gy >= 13 && gy <= 18) return 7;
-    return 1;
-  }
-  if (gx >= 36 && gx <= 43 && gy >= 4 && gy <= 9) return 1;
-  if (gx >= 36 && gx <= 43 && gy >= 22 && gy <= 27) return 1;
-  if (gx >= 45 && gx <= 47 && gy >= 14 && gy <= 17) return 2;
+  if ((gy == 15 || gy == 16) && gx <= 1) return 5;
+  if ((gx == 23 && gy == 14) || (gx == 24 && gy == 16)) return 9;
+  if (in_poly(gx, gy, GEM, 6)) return 4;
+  if ((gx == 38 && gy == 4) || (gx == 38 && gy == 26)) return 7;
+  if (in_poly(gx, gy, PODB, 4)) return 6;
+  if (in_poly(gx, gy, PODT, 4)) return 3;
+  if ((gx == 11 || gx == 24 || gx == 37) && gy == 12) return 7;
+  if ((gx == 17 || gx == 30) && gy >= 9 && gy <= 22) return 6;
+  if (in_poly(gx, gy, REAR, 6)) return 6;
+  if (in_poly(gx, gy, BELLY, 7)) return 3;
+  if (in_poly(gx, gy, NOSE, 7)) return 2;
+  if (in_poly(gx, gy, DECK, 7)) return 8;
+  if (in_poly(gx, gy, HULL, 12)) return 1;
   return 0;
 }
 static int idx_boss_t(int x, int y) {
+  // CRYSTAL CONSTRUCT (design board C): radial prism sectors around a
+  // tall gem core. Indices stay within {1,2,3,4,6} so the design holds
+  // under the BPAL {9,10,15} rotation and the block-13 hit flash.
+  static const int8_t RIM[8][2] = {{32,1},{47,16},{63,32},{47,47},
+                                   {32,63},{16,47},{1,32},{16,16}};
+  static const int8_t OUT_SH[8] = {1,3,6,3,6,3,1,2};
+  static const int8_t INN[8][2] = {{32,14},{44,24},{50,32},{44,40},
+                                   {32,50},{20,40},{14,32},{20,24}};
+  static const int8_t IN_SH[8] = {2,1,3,6,3,1,2,4};
+  static const int8_t GEM[] = {32,20, 38,32, 32,44, 26,32};
+  static const int8_t CORE[] = {32,26, 35,32, 32,38, 29,32};
   int gx = x + PAT_OX, gy = y + PAT_OY;
-  int dx = gx - 32, dy = gy - 32, ad = iabs_(dx) + iabs_(dy);
-  if (ad > 31) return 0;
-  int d2 = dx * dx + dy * dy;
-  if (d2 <= 9) return 2;
-  if (d2 <= 64) return 4;
-  if (ad >= 29) return 3;
-  if (ad >= 19 && ad <= 21) return 6;
-  if (dx == 0 || dy == 0 || iabs_(dx) == iabs_(dy)) return 6;
-  if (dx < 0 && dy < 0) return 2;
-  return 1;
+  if ((gx == 32 && gy == 4) || (gx == 58 && gy == 32) ||
+      (gx == 32 && gy == 60) || (gx == 6 && gy == 32)) return 2;
+  if (in_poly(gx, gy, CORE, 4)) return 4;
+  if (in_poly(gx, gy, GEM, 4)) return 2;
+  for (int i = 0; i < 8; i++) {
+    int8_t tri[6] = {32, 32, INN[i][0], INN[i][1],
+                     INN[(i + 1) & 7][0], INN[(i + 1) & 7][1]};
+    if (in_poly(gx, gy, tri, 3)) return IN_SH[i];
+  }
+  { int dx = gx - 32, dy = gy - 32; if (iabs_(dx) + iabs_(dy) <= 20) return 6; }
+  for (int i = 0; i < 8; i++) {
+    int8_t tri[6] = {32, 32, RIM[i][0], RIM[i][1],
+                     RIM[(i + 1) & 7][0], RIM[(i + 1) & 7][1]};
+    if (in_poly(gx, gy, tri, 3)) return OUT_SH[i];
+  }
+  return 0;
 }
 static int idx_shard(int x, int y) {
-  int ad = iabs_(x - 8) + iabs_(y - 8);
-  if (ad > 7) return 0;
-  if (ad >= 6) return 3;
-  if (ad <= 2) return 4;
-  if (x < 8 && y < 8) return 2;
-  return 1;
+  // CRYSTAL CONSTRUCT (design board C): bright crystal shard, lit
+  // from NW. Drawn with palette block 5 (changed from 10 in the
+  // render code) so the shard reads as a cyan prism orbiting the
+  // boss; indices stay within block 5 / block 13 (flash).
+  static const int8_t DIA[] = {8,0, 15,8, 8,15, 0,8};
+  static const int8_t F1[] = {8,0, 15,8, 8,8, 6,5};
+  static const int8_t F2[] = {8,0, 0,8, 6,5, 8,8};
+  static const int8_t SWF[] = {0,8, 8,15, 8,8};
+  static const int8_t SEF[] = {15,8, 8,15, 8,8};
+  static const int8_t CORE[] = {8,6, 9,8, 8,9, 7,8};
+  if (x == 6 && y == 3) return 2;
+  if (in_poly(x, y, CORE, 4)) return 4;
+  if (in_poly(x, y, SEF, 3)) return 6;
+  if (in_poly(x, y, SWF, 3)) return 3;
+  if (in_poly(x, y, F2, 4)) return 2;
+  if (in_poly(x, y, F1, 4)) return 5;
+  if (in_poly(x, y, DIA, 4)) return 1;
+  return 0;
 }
 static int idx_shield_t(int x, int y) {
   int gx = x + PAT_OX, gy = y + PAT_OY;
@@ -940,22 +1073,25 @@ static const PalDef PAL_DEFS[] = {
   {8,15,GRB(11,21,30)},{9,15,GRB(31,31,31)},{10,15,GRB(4,9,20)},
   {11,15,GRB(20,26,28)},{12,15,GRB(7,16,29)},{13,15,GRB(5,12,26)},
   {14,15,GRB(26,30,31)},
-  {1,1,GRB(10,22,30)},{2,1,GRB(26,31,31)},{3,1,GRB(6,10,26)},
-  {4,1,GRB(31,12,20)},{5,1,GRB(31,18,2)},{6,1,GRB(6,14,22)},{7,1,GRB(31,26,6)},
+  {1,1,GRB(13,20,27)},{2,1,GRB(27,31,31)},{3,1,GRB(5,8,14)},
+  {4,1,GRB(6,28,31)},{5,1,GRB(31,18,2)},{6,1,GRB(8,13,20)},{7,1,GRB(31,26,6)},
+  {8,1,GRB(20,26,30)},
   {1,2,GRB(28,10,6)},{2,2,GRB(31,31,31)},{3,2,GRB(20,5,9)},
-  {4,2,GRB(31,24,4)},{5,2,GRB(31,16,2)},{6,2,GRB(16,6,4)},{7,2,GRB(31,20,4)},
+  {4,2,GRB(31,24,4)},{5,2,GRB(31,16,2)},{6,2,GRB(12,3,5)},{7,2,GRB(31,16,10)},
   {1,3,GRB(20,8,28)},{2,3,GRB(29,17,31)},{3,3,GRB(10,4,16)},
-  {4,3,GRB(31,24,4)},{5,3,GRB(31,8,24)},{6,3,GRB(14,6,20)},{7,3,GRB(24,12,30)},
+  {4,3,GRB(31,24,4)},{5,3,GRB(31,8,24)},{6,3,GRB(6,2,10)},{7,3,GRB(24,12,30)},
   {1,4,GRB(8,20,22)},{2,4,GRB(19,30,30)},{3,4,GRB(3,9,12)},
-  {4,4,GRB(31,8,8)},{5,4,GRB(31,20,4)},{6,4,GRB(5,14,16)},{7,4,GRB(12,26,28)},
+  {4,4,GRB(31,8,8)},{5,4,GRB(31,20,4)},{6,4,GRB(2,5,8)},{7,4,GRB(12,24,26)},
+  {8,4,GRB(24,31,31)},
   {1,5,GRB(6,24,29)},{2,5,GRB(31,31,31)},{3,5,GRB(3,10,18)},
   {4,5,GRB(31,10,26)},{5,5,GRB(10,20,31)},{6,5,GRB(4,16,22)},{7,5,GRB(31,26,6)},
   {1,6,GRB(17,9,29)},{2,6,GRB(31,31,31)},{3,6,GRB(8,4,18)},
   {4,6,GRB(31,24,4)},{5,6,GRB(24,12,31)},{6,6,GRB(11,6,20)},{7,6,GRB(6,28,30)},
   {1,7,GRB(29,22,5)},{2,7,GRB(31,31,31)},{3,7,GRB(16,10,2)},
   {4,7,GRB(31,8,14)},{5,7,GRB(31,28,10)},{6,7,GRB(20,14,3)},{7,7,GRB(8,26,30)},
-  {1,8,GRB(14,12,24)},{2,8,GRB(23,21,31)},{3,8,GRB(7,6,14)},
-  {4,8,GRB(6,28,30)},{5,8,GRB(31,18,2)},{6,8,GRB(9,8,18)},{7,8,GRB(31,10,10)},
+  {1,8,GRB(14,12,24)},{2,8,GRB(26,25,31)},{3,8,GRB(9,8,18)},
+  {4,8,GRB(6,28,30)},{5,8,GRB(31,18,2)},{6,8,GRB(5,4,10)},{7,8,GRB(31,10,10)},
+  {8,8,GRB(20,18,28)},{9,8,GRB(24,31,31)},
   {1,9,GRB(8,22,28)},{2,9,GRB(28,31,31)},{3,9,GRB(4,10,16)},
   {4,9,GRB(31,26,6)},{6,9,GRB(6,16,20)},
   {1,10,GRB(24,12,26)},{2,10,GRB(31,31,31)},{3,10,GRB(12,6,14)},
@@ -967,6 +1103,9 @@ static const PalDef PAL_DEFS[] = {
   {1,13,GRB(31,31,31)},{2,13,GRB(31,31,31)},
   {3,13,GRB(31,31,31)},{4,13,GRB(31,31,31)},{5,13,GRB(31,31,31)},
   {6,13,GRB(31,31,31)},{7,13,GRB(31,31,31)},
+  {8,13,GRB(31,31,31)},{9,13,GRB(31,31,31)},{10,13,GRB(31,31,31)},
+  {11,13,GRB(31,31,31)},{12,13,GRB(31,31,31)},{13,13,GRB(31,31,31)},
+  {14,13,GRB(31,31,31)},
   {1,14,GRB(9,27,30)},{2,14,GRB(31,31,31)},
   {1,15,GRB(10,26,12)},{2,15,GRB(31,31,31)},{3,15,GRB(5,14,7)},
   {4,15,GRB(31,14,26)},{6,15,GRB(7,18,9)},
@@ -2241,7 +2380,7 @@ private:
                  PAT_BOSS + ty * 4 + tx, bpal);
       for (int i = 0; i < 4; i++) if (shard_hp_[i] > 0)
         sp_put(shard_x_[i] - 8, shard_y_[i] - 8, PAT_SHARD,
-               shard_flash_[i] > 0 ? 13 : 10);
+               shard_flash_[i] > 0 ? 13 : 5);
     }
     for (int i = 0; i < 20; i++) if (enemies_[i].active) {
       Enemy &e = enemies_[i];
