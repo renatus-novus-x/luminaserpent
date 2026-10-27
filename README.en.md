@@ -2,7 +2,7 @@
 
 # LUMINA SERPENT for X68000
 
-![LUMINA SERPENT teaser](images/teaser.png)
+![LUMINA SERPENT teaser](images/teaser.gif)
 
 **[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
 
@@ -130,4 +130,4 @@ and emits the tile header.
 | `tools/gen_logo_title.py` | Quantizes the title logo art and emits `logo_title.h` |
 | `README.md` | Japanese README (main) with design and optimization notes |
 | `dist/luminaserpent.xdf` | Bootable disk image (included) |
-| `images/teaser.png` | Teaser screenshot |
+| `images/teaser.gif` | Animated teaser (gameplay) |

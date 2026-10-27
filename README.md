@@ -2,7 +2,7 @@
 
 # LUMINA SERPENT for X68000
 
-![LUMINA SERPENT teaser](images/teaser.png)
+![LUMINA SERPENT teaser](images/teaser.gif)
 
 **[Launch LUMINA SERPENT in WebX68k](https://uraraworks.github.io/WebX68k/?fd1=https://raw.githubusercontent.com/renatus-novus-x/luminaserpent/main/dist/luminaserpent.xdf&run=1)**
 
