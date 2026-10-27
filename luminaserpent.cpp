@@ -999,25 +999,27 @@ static int idx_item_star(int x, int y) {
    13 deep, 14 near-white) -- block 0 turned out not to retain
    _iocs_spalet writes under WebX68k (it showed the system default
    palette instead), so it must not be used. Shade-boundary rows
-   dither between neighbours to fake intermediate levels. */
+   dither between neighbours to fake intermediate levels.
+   Slimmed from 48px/3 bands to 32px/2 bands (user feedback: the
+   48px beam was too thick); also cuts the beam's sprite count by
+   25% (3 per column instead of 4). */
 static int beam_shade(int r, int x, int y) {
   int a = r < 0 ? -r : r;
   bool dith = ((x + y) & 1) != 0;
-  if (a <= 3) return 9;
-  if (a <= 5) return 14;
-  if (a == 6) return dith ? 14 : 11;
-  if (a <= 9) return 11;
-  if (a == 10) return dith ? 11 : 8;
-  if (a <= 13) return 8;
-  if (a == 14) return dith ? 8 : 12;
-  if (a <= 17) return 12;
-  if (a == 18) return dith ? 12 : 13;
-  if (a <= 21) return 13;
-  return dith ? 10 : 0;
+  if (a <= 2) return 9;
+  if (a <= 4) return 14;
+  if (a == 5) return dith ? 14 : 11;
+  if (a <= 7) return 11;
+  if (a == 8) return dith ? 11 : 8;
+  if (a <= 10) return 8;
+  if (a == 11) return dith ? 8 : 12;
+  if (a <= 13) return 12;
+  if (a == 14) return dith ? 12 : 13;
+  if (a <= 15) return 13;
+  return 0;
 }
-static int idx_beam_t(int x, int y) { return beam_shade(y - 24, x, y); }
-static int idx_beam_m(int x, int y) { return beam_shade(y - 8, x, y); }
-static int idx_beam_b(int x, int y) { return beam_shade(y + 8, x, y); }
+static int idx_beam_t(int x, int y) { return beam_shade(y - 16, x, y); }
+static int idx_beam_m(int x, int y) { return beam_shade(y, x, y); }
 /* flowing inner streak: a soft bright wave, tapered at the tile
    edges so consecutive tiles read as one river of light */
 static int beam_streak(int x, int y, int ph) {
@@ -1049,7 +1051,7 @@ enum {
   PAT_CAPSULE = 9, PAT_PBUL = 10, PAT_EBUL = 11, PAT_MISSILE = 12,
   PAT_SPARK = 13, PAT_CRY = 14, PAT_CAR = 18, PAT_BOSS = 24,
   PAT_SHARD = 40, PAT_SHIELD = 41, PAT_ITEM = 47,
-  PAT_BEAM_T = 54, PAT_BEAM_M = 55, PAT_BEAM_B = 56,
+  PAT_BEAM_T = 54, PAT_BEAM_M = 55, PAT_BEAM_B = 56 /* B unused since the 32px slimming */,
   PAT_BEAM_S0 = 57, PAT_BEAM_S1 = 58, PAT_FLARE = 59
 };
 
@@ -1218,7 +1220,17 @@ private:
   bool warn_overlay_ = false;
   /* sprites */
   bool sprites_on_ = false;
-  int sp_cursor_ = 0, sp_prev_count_ = 0;
+  int sp_prev_count_ = 0;
+  /* Sprite requests are buffered per frame and flushed by
+     sp_end_frame(). When more than the hardware's 128 sprites are
+     requested, a 128-wide window rotates over the whole request
+     list frame by frame, so the excess flickers (classic sprite
+     multiplexing) instead of the tail of the list never appearing
+     at all (measured: PRISM beam alone can request ~128, and a
+     busy boss frame ~150-250 in total). */
+  struct SpReq { int16_t x, y; uint16_t code; };
+  SpReq sp_req_[512];
+  int sp_req_n_ = 0, sp_rot_ = 0;
   int super_ssp_ = -1;
   /* HUD delta tracking */
   int shown_score_ = -1, shown_hi_ = -1, shown_lives_ = -1, shown_res_w_ = -1;
@@ -1630,8 +1642,6 @@ private:
     _iocs_sp_defcg(PAT_BEAM_T * 4, 1, pat);
     build_pat16(pat, idx_beam_m);
     _iocs_sp_defcg(PAT_BEAM_M * 4, 1, pat);
-    build_pat16(pat, idx_beam_b);
-    _iocs_sp_defcg(PAT_BEAM_B * 4, 1, pat);
     build_pat16(pat, idx_beam_s0);
     _iocs_sp_defcg(PAT_BEAM_S0 * 4, 1, pat);
     build_pat16(pat, idx_beam_s1);
@@ -1651,28 +1661,42 @@ private:
      CRTC (512x480), measured the same way. */
   void sp_put(int x, int y, int pat, int pal, bool hflip = false,
               bool vflip = false) {
-    if (sp_cursor_ >= 128) return;
-    volatile uint16_t *sp = (volatile uint16_t *)(0xEB0000UL + sp_cursor_ * 8);
-    sp[0] = (uint16_t)(x + 16 + shake_ox_);
-    sp[1] = (uint16_t)(y + 16 - 6 + shake_oy_);
-    sp[2] = (uint16_t)(pat * 4 | (pal << 8) | (hflip ? 0x4000 : 0) |
-                       (vflip ? 0x8000 : 0));
-    sp[3] = 3;
-    sp_cursor_++;
+    if (sp_req_n_ >= 512) return;
+    SpReq &r = sp_req_[sp_req_n_++];
+    r.x = (int16_t)(x + 16 + shake_ox_);
+    r.y = (int16_t)(y + 16 - 6 + shake_oy_);
+    r.code = (uint16_t)(pat * 4 | (pal << 8) | (hflip ? 0x4000 : 0) |
+                        (vflip ? 0x8000 : 0));
   }
   void sp_begin_frame() {
-    sp_cursor_ = 0;
+    sp_req_n_ = 0;
     if (shake_amp_ > 0) {
       shake_ox_ = rand_mod(2 * shake_amp_ + 1) - shake_amp_;
       shake_oy_ = rand_mod(2 * shake_amp_ + 1) - shake_amp_;
     } else { shake_ox_ = 0; shake_oy_ = 0; }
   }
   void sp_end_frame() {
-    for (int i = sp_cursor_; i < sp_prev_count_; i++) {
+    int total = sp_req_n_;
+    int n = total < 128 ? total : 128;
+    int start = 0;
+    if (total > 128) {
+      start = sp_rot_ < total ? sp_rot_ : 0;
+      sp_rot_ = start + 128;
+      if (sp_rot_ >= total) sp_rot_ -= total;
+    }
+    for (int k = 0; k < n; k++) {
+      const SpReq &r = sp_req_[(start + k) % total];
+      volatile uint16_t *sp = (volatile uint16_t *)(0xEB0000UL + k * 8);
+      sp[0] = (uint16_t)r.x;
+      sp[1] = (uint16_t)r.y;
+      sp[2] = r.code;
+      sp[3] = 3;
+    }
+    for (int i = n; i < sp_prev_count_; i++) {
       volatile uint16_t *sp = (volatile uint16_t *)(0xEB0000UL + i * 8);
       sp[1] = (uint16_t)(16 + 512 + 32);
     }
-    sp_prev_count_ = sp_cursor_;
+    sp_prev_count_ = n;
   }
   void sp_hide_all() {
     for (int i = 0; i < 128; i++) {
@@ -2331,8 +2355,8 @@ private:
     }
     /* ---- PRISM beam on hardware sprites (AURORA STREAM): layered
        gradient band tiles follow the laser polyline -- muzzle flare,
-       then per column a flowing streak + the 3-tile cross-section
-       (48px). No GVRAM writes; sprite priority puts the beam behind
+       then per column a flowing streak + the 2-tile cross-section
+       (32px). No GVRAM writes; sprite priority puts the beam behind
        the ship but in front of enemies and the boss. ---- */
     if (prism_t_ > 0 && laser_n_ > 0 && !player_dead_) {
       int nx = laser_x_[0], ny = laser_y_[0];
@@ -2353,14 +2377,13 @@ private:
         }
       }
       for (int j = 2, col = 0; j < bn; j += 4, col++) {
-        if (sp_cursor_ < 96) {
+        if (sp_req_n_ < 96) {
           int oy = (sin64((col * 7 + (frame_ << 1)) & 63) * 3) >> 8;
           sp_put(bpx[j] - 8, bpy[j] - 8 + oy,
                  ((col + (frame_ >> 2)) & 1) ? PAT_BEAM_S1 : PAT_BEAM_S0, 15);
         }
-        sp_put(bpx[j] - 8, bpy[j] - 24, PAT_BEAM_T, 15);
-        sp_put(bpx[j] - 8, bpy[j] - 8, PAT_BEAM_M, 15);
-        sp_put(bpx[j] - 8, bpy[j] + 8, PAT_BEAM_B, 15);
+        sp_put(bpx[j] - 8, bpy[j] - 16, PAT_BEAM_T, 15);
+        sp_put(bpx[j] - 8, bpy[j], PAT_BEAM_M, 15);
       }
     }
     {
