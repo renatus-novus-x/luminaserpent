@@ -469,12 +469,16 @@ static int noise2s(int x, int y, int shift) {
 }
 static int clamp255(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 
-/* nebula tint grids (filled by build_bg_cache, reused by
-   base_bg_pixel so title overlays can repaint plain space) */
+/* nebula tint grids (filled by build_bg_cache) */
 static int bg_tint_r[61][65], bg_tint_b[61][65];
+
+/* boot progress bar + plain-background rect bookkeeping (below) */
+static void load_progress(int pct);
+static void bg_save_plain_rect();
 
 static void build_bg_cache() {
   lattice_init();
+  load_progress(5);
   /* faint nebula tint on a coarse grid */
   for (int gy = 0; gy < 61; gy++)
     for (int gx = 0; gx < 65; gx++) {
@@ -485,6 +489,7 @@ static void build_bg_cache() {
     }
   /* gradient + tint (tint lerped vertically per row, grid lookup across) */
   for (int y = 0; y < SCR_H; y++) {
+    if ((y & 63) == 0) load_progress(5 + y * 60 / 480);
     int gy = y >> 3, fy = y & 7;
     int row_tr[65], row_tb[65];
     for (int gx = 0; gx < 65; gx++) {
@@ -523,7 +528,36 @@ static void build_bg_cache() {
       if (star_y[i] < SCR_H - 1) bg_cache[star_y[i] + 1][star_x[i]] = h;
     }
   }
-  /* Earth tile (105x105 at 2x = 210x210, fully inside the screen) */
+  /* The cache stays PLAIN (no Earth) so the title screen can use it
+     as-is; the in-game Earth tile is composed into the cache later
+     by bg_compose_earth() when a game starts. The plain pixels under
+     the tile footprint are saved so the title can restore them. */
+  bg_save_plain_rect();
+}
+
+/* restore background over a rect: copy from the RAM cache */
+static void restore_bg(int x1, int y1, int x2, int y2) {
+  blit_bg_rect(x1, y1, x2, y2);
+}
+static void draw_background() { blit_bg_rect(0, 0, SCR_W - 1, SCR_H - 1); }
+
+/* Plain-background rect under the in-game Earth tile (210x210), saved
+   at boot before the tile is ever composed in. Restoring it is a pure
+   copy -- the title screen never recomputes background pixels. */
+static uint16_t bg_plain_rect[210][210];
+static bool bg_cache_has_earth = false;
+static void bg_save_plain_rect() {
+  const int OX = EARTH_CX - 104, OY = EARTH_CY - 104;
+  for (int y = 0; y < 210; y++)
+    memcpy(bg_plain_rect[y], &bg_cache[OY + y][OX], 210 * 2);
+}
+static void bg_restore_plain_rect() {
+  const int OX = EARTH_CX - 104, OY = EARTH_CY - 104;
+  for (int y = 0; y < 210; y++)
+    memcpy(&bg_cache[OY + y][OX], bg_plain_rect[y], 210 * 2);
+}
+/* Earth tile (105x105 at 2x = 210x210, fully inside the screen) */
+static void bg_compose_earth() {
   const int OX = EARTH_CX - 104, OY = EARTH_CY - 104;
   for (int ty = 0; ty < 105; ty++) {
     int sy = OY + ty * 2;
@@ -538,31 +572,16 @@ static void build_bg_cache() {
   }
 }
 
-/* restore background over a rect: copy from the RAM cache */
-static void restore_bg(int x1, int y1, int x2, int y2) {
-  blit_bg_rect(x1, y1, x2, y2);
-}
-static void draw_background() { blit_bg_rect(0, 0, SCR_W - 1, SCR_H - 1); }
-
-/* One pixel of the plain space background (gradient + nebula tint +
-   jitter, no stars, no Earth), computed exactly as build_bg_cache
-   does. The title screen uses it to paint over the in-game Earth
-   tile before drawing its own Earth disc. */
-static uint16_t base_bg_pixel(int x, int y) {
-  int gy = y >> 3, fy = y & 7, gx = x >> 3;
-  int tr = (bg_tint_r[gy][gx] * (8 - fy) + bg_tint_r[gy + 1][gx] * fy) / 8;
-  int tb = (bg_tint_b[gy][gx] * (8 - fy) + bg_tint_b[gy + 1][gx] * fy) / 8;
-  uint16_t c = bg_color(y);
-  int cr = ((c >> 6) & 31) * 8, cg = ((c >> 11) & 31) * 8, cb = ((c >> 1) & 31) * 8;
-  int jit = (int)((x * 73 + y * 149) & 7) - 4;
-  return GRB(clamp255(cr + tr * 8 + jit) >> 3,
-             clamp255(cg + jit) >> 3,
-             clamp255(cb + tb * 8 + jit) >> 3);
-}
-static void paint_base_bg_rect(int x1, int y1, int x2, int y2) {
-  for (int y = y1; y <= y2; y++)
-    for (int x = x1; x <= x2; x++)
-      GVRAM[y * GV_STRIDE + x] = base_bg_pixel(x, y);
+/* NOW LOADING progress bar (boot only): dark track + cyan fill +
+   percent number. Called from the boot steps in Game::run and from
+   the two long boot loops (background bake, sprite pattern bake). */
+static void load_progress(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  Gfx::fill(158, 234, 354, 244, GRB(1, 2, 5));
+  int w = pct * 196 / 100;
+  if (w > 0) Gfx::fill(158, 234, 158 + w - 1, 244, GRB(0, 24, 27));
+  Gfx::number(364, 234, 1, GRB(16, 22, 26), pct, 3);
 }
 static uint16_t shade(uint16_t c, int d) {
   int r = ((c >> 6) & 31) + d, g = ((c >> 11) & 31) + d, b = ((c >> 1) & 31) + d;
@@ -784,6 +803,10 @@ static bool in_poly(int px, int py, const int8_t *poly, int n) {
   return inside;
 }
 static int ship_g(int sx, int y, bool shortflame) {
+  // GLOSS SERPENT (refine board 1-B, MSX route): bright cyan hull with
+  // a navy underside, glossy glass canopy, orange exhaust. Indices
+  // (block 1): 8 light hull, 1 mid hull, 6 shade, 3 navy, 4 canopy,
+  // 2 specular white, 5/7 flame.
   static const int8_t SIL[] = {2,6, 6,4, 14,3, 22,4, 31,7, 31,8, 22,11, 14,12, 6,11, 2,9};
   static const int8_t TOPF[] = {2,6, 6,4, 14,3, 22,4, 26,6, 14,6, 6,6};
   static const int8_t NOSE[] = {22,4, 31,7, 31,8, 22,9, 20,7};
@@ -801,13 +824,13 @@ static int ship_g(int sx, int y, bool shortflame) {
   if (sx == 19 && y == 6) return 2;   // canopy specular
   if (in_poly(sx, y, CANOPY, 6)) return 4;
   if (in_poly(sx, y, FINB, 4)) return 3;
-  if (in_poly(sx, y, FINL, 4)) return 8;
-  if (in_poly(sx, y, FINT, 4)) return 6;
+  if (in_poly(sx, y, FINL, 4)) return 1;
+  if (in_poly(sx, y, FINT, 4)) return 8;
   if (in_poly(sx, y, ENG, 4)) return 3;
-  if (in_poly(sx, y, BELLY, 6)) return 6;
-  if (in_poly(sx, y, NOSE, 5)) return 2;
+  if (in_poly(sx, y, BELLY, 6)) return 3;
+  if (in_poly(sx, y, NOSE, 5)) return 8;
   if (in_poly(sx, y, TOPF, 7)) return 8;
-  if (in_poly(sx, y, SIL, 10)) return 1;
+  if (in_poly(sx, y, SIL, 10)) return y >= 10 ? 6 : 1;
   return 0;
 }
 static int idx_ship_l(int x, int y)  { return ship_g(x, y, false); }
@@ -815,41 +838,45 @@ static int idx_ship_r(int x, int y)  { return ship_g(x + 16, y, false); }
 static int idx_ship_lf(int x, int y) { return ship_g(x, y, true); }
 static int idx_ship_rf(int x, int y) { return ship_g(x + 16, y, true); }
 static int idx_option(int x, int y) {
+  // GLOSSY ECHO drone (board 1-B): white cap, bright teal dome, navy
+  // base, gold sensor eye. Block 12: 2 white, 3 teal, 1 navy, 5 gold.
   int ad = iabs_(x - 8) + iabs_(y - 8);
   if (ad > 6) return 0;
+  if (x == 11 && y == 8) return 5;
+  if (y >= 11) return 1;
+  if (y <= 4) return 2;
+  if (y >= 10) return 1;
   if (ad <= 2) return 2;
-  if (ad <= 4) return 4;
   return 3;
 }
 static int idx_fan(int x, int y) {
-  // FACET MACHINE (design board A): faceted rotor housing, lit from NW.
-  // Indices (block 2): 1 body, 7 light facet, 2 specular, 3 dark,
-  // 6 darkest, 4 core, 5 exhaust.
+  // GLOSSY fan drone (board 2-B, MSX route): yellow dome, orange band
+  // and hub, dark magenta underside. Block 2: 7 pale, 1 yellow,
+  // 5 orange, 4 hub orange, 3 slit dark, 6 underside, 2 specular.
   static const int8_t OCT[] = {8,0, 12,1, 15,4, 15,11, 12,14, 8,15, 3,14, 0,11, 0,4, 3,1};
   static const int8_t TOPF[] = {8,0, 12,1, 15,4, 8,8, 4,4};
-  static const int8_t NWS[] = {0,4, 3,1, 8,0, 4,4};
-  static const int8_t RF[] = {15,4, 15,11, 8,8};
   static const int8_t BELLY[] = {8,8, 15,11, 12,14, 8,15, 3,14, 0,11};
   static const int8_t BLN[] = {8,2, 9,6, 8,7, 7,6};
   static const int8_t BLSE[] = {13,11, 10,9, 9,8, 11,7};
   static const int8_t BLSW[] = {2,11, 5,9, 6,8, 4,7};
   if ((y == 7 || y == 8) && x >= 14) return 5;
-  if (x == 7 && y == 7) return 2;
-  { int dx = 2 * x - 14, dy = 2 * y - 14; if (dx * dx + dy * dy <= 19) return 4; }
-  if (in_poly(x, y, BLSW, 4)) return 6;
+  { int dx = 2 * x - 15, dy = 2 * y - 15, d2 = dx * dx + dy * dy;
+    if (d2 <= 11) return 2;
+    if (d2 <= 75) return 4; }
+  if (x == 5 && y == 3) return 2;
+  if (in_poly(x, y, BLSW, 4)) return 3;
   if (in_poly(x, y, BLSE, 4)) return 3;
   if (in_poly(x, y, BLN, 4)) return 3;
+  if (y >= 7 && y <= 9 && in_poly(x, y, OCT, 10)) return 5;
   if (in_poly(x, y, BELLY, 6)) return 6;
-  if (in_poly(x, y, RF, 3)) return 3;
-  if (in_poly(x, y, NWS, 4)) return 2;
   if (in_poly(x, y, TOPF, 5)) return 7;
-  if (in_poly(x, y, OCT, 10)) return 1;
+  if (in_poly(x, y, OCT, 10)) return y <= 4 ? 7 : 1;
   return 0;
 }
 static int idx_weaver(int x, int y) {
-  // FACET MACHINE (design board A): octahedron facets, lit from W.
-  // Indices (block 3): 1 body, 2 light facet/specular, 3 dark,
-  // 6 darkest, 4 core.
+  // GLOSSY weaver (board 2-B, MSX route): green lens, white glossy
+  // stripe, yellow core. Block 3: 7 light, 1 green, 2 pale stripe,
+  // 3 dark, 6 darkest, 4 core.
   static const int8_t DIA[] = {8,0, 15,8, 8,15, 0,8};
   static const int8_t EF[] = {8,0, 15,8, 8,8};
   static const int8_t WF[] = {8,0, 0,8, 8,8};
@@ -858,19 +885,21 @@ static int idx_weaver(int x, int y) {
   static const int8_t RING[] = {8,3, 11,8, 8,12, 5,8};
   static const int8_t CORE[] = {8,5, 10,8, 8,10, 6,8};
   if (x == 7 && y == 4) return 2;
+  if (x == 8 && y == 8) return 2;
   if (in_poly(x, y, CORE, 4)) return 4;
-  if (in_poly(x, y, RING, 4)) return 2;
+  if ((y == 7 || y == 8) && in_poly(x, y, DIA, 4)) return 2;
+  if (in_poly(x, y, RING, 4)) return 7;
   if (in_poly(x, y, SEF, 3)) return 6;
   if (in_poly(x, y, SWF, 3)) return 3;
-  if (in_poly(x, y, WF, 3)) return 2;
-  if (in_poly(x, y, EF, 3)) return 3;
-  if (in_poly(x, y, DIA, 4)) return 1;
+  if (in_poly(x, y, WF, 3)) return 7;
+  if (in_poly(x, y, EF, 3)) return 1;
+  if (in_poly(x, y, DIA, 4)) return y <= 2 ? 7 : 1;
   return 0;
 }
 static int idx_orb(int x, int y) {
-  // FACET MACHINE (design board A): low-poly sphere facets.
-  // Indices (block 4): 1 body, 2 light facet, 8 specular, 3 dark,
-  // 6 darkest, 7 centre facet, 4 core gem.
+  // GLOSSY orb (board 2-B, MSX route): magenta sphere, pale facet,
+  // red core gem. Block 4: 1 magenta, 2 pale, 8 specular, 7 centre,
+  // 3 dark, 6 darkest, 4 core.
   static const int8_t TLF[] = {3,2, 8,1, 9,5, 5,6, 2,5};
   static const int8_t LF[] = {2,5, 5,6, 6,10, 3,11, 1,8};
   static const int8_t BOTF[] = {6,10, 9,5, 13,6, 12,12, 7,13, 3,11};
@@ -880,17 +909,16 @@ static int idx_orb(int x, int y) {
   if (in_poly(x, y, GEM, 4)) return 4;
   if (in_poly(x, y, CENF, 4)) return 7;
   if (in_poly(x, y, BOTF, 6)) return 6;
-  if (in_poly(x, y, LF, 5)) return 3;
+  if (in_poly(x, y, LF, 5)) return 1;
   if (in_poly(x, y, TLF, 5)) return 2;
-  { int dx = 2 * x - 14, dy = 2 * y - 14; if (dx * dx + dy * dy <= 207) return 1; }
+  { int dx = 2 * x - 14, dy = 2 * y - 14;
+    if (dx * dx + dy * dy <= 207) return y >= 12 ? 3 : 1; }
   return 0;
 }
 static int idx_dart(int x, int y) {
-  // FACET MACHINE (design board A): faceted arrowhead.
-  // Indices (block 7): 1 body, 5 light facet, 2 specular, 6 dark,
-  // 3 darkest. (Block 7 is shared with the crystal CPAL rotation and
-  // the THRUST item; only dart reads 3/6 among them, so no palette
-  // entries needed changing.)
+  // GLOSSY dart (board 2-B, MSX route): amber wedge, pale top facet,
+  // white nose. Block 7 (shared semantics with crystal phase C and
+  // the T capsule): 1 amber, 5 light, 2 white, 6 shade, 3 darkest.
   static const int8_t BODY[] = {1,6, 8,5, 15,7, 15,8, 8,10, 1,9};
   static const int8_t TOPF[] = {1,6, 8,5, 15,7, 9,7, 3,7};
   static const int8_t BELLY[] = {9,7, 15,7, 15,8, 8,10, 3,8};
@@ -899,11 +927,11 @@ static int idx_dart(int x, int y) {
   static const int8_t FINB[] = {2,10, 5,13, 7,10};
   if (x == 13 && y == 7) return 2;
   if (in_poly(x, y, FINB, 3)) return 3;
-  if (in_poly(x, y, FINT, 3)) return 6;
-  if (in_poly(x, y, NOSE, 4)) return 2;
+  if (in_poly(x, y, FINT, 3)) return 5;
+  if (in_poly(x, y, NOSE, 4)) return 5;
   if (in_poly(x, y, BELLY, 5)) return 6;
   if (in_poly(x, y, TOPF, 5)) return 5;
-  if (in_poly(x, y, BODY, 6)) return 1;
+  if (in_poly(x, y, BODY, 6)) return y >= 9 ? 6 : 1;
   return 0;
 }
 static int idx_capsule(int x, int y) {
@@ -915,34 +943,56 @@ static int idx_capsule(int x, int y) {
   return 0;
 }
 static int idx_pbullet(int x, int y) {
-  if (y >= 7 && y <= 8 && x >= 2 && x <= 13) return x >= 11 ? 2 : 1;
-  if ((y == 6 || y == 9) && x >= 4 && x <= 10) return 5;
+  // GLOSSY bolt (board 1-B): white head, yellow body, gold taper.
+  // Block 11: 2 white, 1 yellow, 7 gold.
+  if (y >= 7 && y <= 8 && x >= 2 && x <= 13) return x >= 12 ? 2 : 1;
+  if ((y == 6 || y == 9) && x >= 4 && x <= 11) return 7;
+  if ((y == 5 || y == 10) && x >= 6 && x <= 9) return 1;
   return 0;
 }
 static int idx_ebullet(int x, int y) {
+  // GLOSSY enemy shot (board 2-B): white core, magenta body, dark
+  // red shade ring. Block 11: 2 white, 4 magenta-red, 3 dark red.
   int dx = x - 8, dy = y - 8, d2 = dx * dx + dy * dy;
-  if (d2 <= 16) return d2 <= 4 ? 2 : 4;
+  if (d2 <= 4) return 2;
+  if (d2 <= 16) return 4;
+  if (d2 <= 25) return 3;
   return 0;
 }
 static int idx_missile(int x, int y) {
-  if ((y == 7 || y == 8) && x <= 2) return 6;
-  if (y >= 6 && y <= 9 && x >= 3 && x <= 13) return x >= 12 ? 2 : 5;
-  if ((y == 4 || y == 5) && x >= 3 && x <= 5) return 3;
-  if ((y == 10 || y == 11) && x >= 3 && x <= 5) return 3;
+  // GLOSSY COMET missile (board 1-B, MSX route): orange body with a
+  // yellow gloss line, white nose, magenta fins, gold flame.
+  // Block 11: 6 orange, 1 yellow, 2 white, 4 magenta, 3 shade, 7 gold.
+  if ((y == 7 || y == 8) && x <= 1) return 7;
+  if ((y == 7 || y == 8) && x == 2) return 6;
+  if (y >= 6 && y <= 9 && x >= 3 && x <= 13) {
+    if (x >= 12) return 2;
+    if (y == 6) return 1;
+    if (y == 9) return 3;
+    return 6;
+  }
+  if ((y == 4 || y == 5) && x >= 3 && x <= 5) return 4;
+  if ((y == 10 || y == 11) && x >= 3 && x <= 5) return 4;
   return 0;
 }
 static int idx_spark(int x, int y) {
+  // GLOSSY burst (board 5-B): white core, long cardinal rays, shorter
+  // diagonal rays with bright tips. Indices {1,2,4} stay valid in
+  // every palette block the particles cycle through.
   int dx = x - 8, dy = y - 8;
   if (dx == 0 && dy == 0) return 2;
   if ((dx == 0 && dy >= -6 && dy <= 6) || (dy == 0 && dx >= -6 && dx <= 6))
     return 1;
+  if ((dx == 0 && (dy == -7 || dy == 7)) || (dy == 0 && (dx == -7 || dx == 7)))
+    return 4;
   if (dx == dy || dx == -dy) { int a = iabs_(dx); if (a <= 4 && a > 0) return 4; }
   return 0;
 }
 static int idx_cry_t(int x, int y) {
-  // FACET MACHINE (design board A): hard-faceted diamond. Indices are
-  // semantic (1 body, 2 white, 3 dark, 4 core, 5 light facet, 6 shade)
-  // so the design survives the CPAL {5,6,7} phase rotation unchanged.
+  // GLOSSY crystal (board 3-B, MSX route): faceted spindle with a
+  // white waist stripe and a glowing core. Indices stay semantic
+  // (1 body, 2 white, 3 dark, 4 core, 5 light facet, 6 shade) so the
+  // design survives the CPAL {5,6,7} phase rotation unchanged.
   static const int8_t DIA[] = {16,0, 31,16, 16,31, 0,16};
   static const int8_t EF[] = {16,0, 31,16, 16,16};
   static const int8_t WF[] = {16,0, 0,16, 16,16};
@@ -953,19 +1003,24 @@ static int idx_cry_t(int x, int y) {
   int gx = x + PAT_OX, gy = y + PAT_OY;
   if ((gx == 13 && gy == 9) || (gx == 15 && gy == 14)) return 2;
   if (in_poly(gx, gy, CORE, 4)) return 4;
+  if ((gx == 15 || gx == 16) && gy >= 9 && gy <= 22) return 2;
   if (in_poly(gx, gy, RING, 4)) return 5;
-  if (in_poly(gx, gy, SEF, 3)) return 6;
-  if (in_poly(gx, gy, SWF, 3)) return 3;
-  if (in_poly(gx, gy, WF, 3)) return 5;
-  if (in_poly(gx, gy, EF, 3)) return 3;
-  if (in_poly(gx, gy, DIA, 4)) return 1;
-  return 0;
+  int v;
+  if (in_poly(gx, gy, SEF, 3)) v = 6;
+  else if (in_poly(gx, gy, SWF, 3)) v = 3;
+  else if (in_poly(gx, gy, WF, 3)) v = 5;
+  else if (in_poly(gx, gy, EF, 3)) v = 1;
+  else if (in_poly(gx, gy, DIA, 4)) v = 1;
+  else return 0;
+  if (v == 1 && gy <= 5) v = 5;    /* glossy top light */
+  if (v == 1 && gy >= 26) v = 6;   /* shaded tip */
+  return v;
 }
 static int idx_car_t(int x, int y) {
-  // FACET MACHINE (design board A): armoured hull facets, gem core.
-  // Indices (block 8): 1 body, 8 light facet, 2 nose specular,
-  // 3 dark, 6 darkest, 4 core gem, 9 core light, 7 panel lights,
-  // 5 exhaust.
+  // GLOSSY carrier (board 3-B, MSX route): blue gradient hull, orange
+  // deck and pods, red gem core in a pale ring. Block 8: 1 body,
+  // 8 light, 2 pale, 3 shade, 6 darkest, 4 core, 9 core specular,
+  // 7 orange, 5 exhaust.
   static const int8_t HULL[] = {4,10, 16,8, 34,8, 44,12, 47,15, 47,16, 44,20, 34,23, 16,23, 4,21, 1,16, 1,15};
   static const int8_t DECK[] = {4,10, 16,8, 34,8, 44,12, 47,15, 24,15, 10,13};
   static const int8_t NOSE[] = {34,8, 44,12, 47,15, 47,16, 44,20, 36,17, 30,12};
@@ -974,79 +1029,78 @@ static int idx_car_t(int x, int y) {
   static const int8_t PODT[] = {36,2, 43,2, 44,8, 35,8};
   static const int8_t PODB[] = {36,23, 43,23, 44,29, 35,29};
   static const int8_t GEM[] = {21,12, 27,12, 29,16, 27,19, 21,19, 19,16};
+  static const int8_t RING[] = {24,10, 31,16, 24,22, 17,16};
   int gx = x + PAT_OX, gy = y + PAT_OY;
   if ((gy == 15 || gy == 16) && gx <= 1) return 5;
   if ((gx == 23 && gy == 14) || (gx == 24 && gy == 16)) return 9;
   if (in_poly(gx, gy, GEM, 6)) return 4;
-  if ((gx == 38 && gy == 4) || (gx == 38 && gy == 26)) return 7;
-  if (in_poly(gx, gy, PODB, 4)) return 6;
-  if (in_poly(gx, gy, PODT, 4)) return 3;
-  if ((gx == 11 || gx == 24 || gx == 37) && gy == 12) return 7;
+  if (in_poly(gx, gy, RING, 4)) return 2;
+  if ((gx == 38 && gy == 4) || (gx == 38 && gy == 26)) return 9;
+  if (in_poly(gx, gy, PODB, 4)) return 3;
+  if (in_poly(gx, gy, PODT, 4)) return 7;
+  if ((gx == 11 || gx == 37) && gy == 12) return 7;
   if ((gx == 17 || gx == 30) && gy >= 9 && gy <= 22) return 6;
   if (in_poly(gx, gy, REAR, 6)) return 6;
   if (in_poly(gx, gy, BELLY, 7)) return 3;
-  if (in_poly(gx, gy, NOSE, 7)) return 2;
-  if (in_poly(gx, gy, DECK, 7)) return 8;
-  if (in_poly(gx, gy, HULL, 12)) return 1;
+  if (in_poly(gx, gy, NOSE, 7)) return 8;
+  if (in_poly(gx, gy, DECK, 7)) return 7;
+  if (in_poly(gx, gy, HULL, 12)) return gy <= 10 ? 8 : (gy >= 21 ? 3 : 1);
   return 0;
 }
 static int idx_boss_t(int x, int y) {
-  // CRYSTAL CONSTRUCT (design board C): radial prism sectors around a
-  // tall gem core. Indices stay within {1,2,3,4,6} so the design holds
-  // under the BPAL {9,10,15} rotation and the block-13 hit flash.
-  static const int8_t RIM[8][2] = {{32,1},{47,16},{63,32},{47,47},
-                                   {32,63},{16,47},{1,32},{16,16}};
-  static const int8_t OUT_SH[8] = {1,3,6,3,6,3,1,2};
-  static const int8_t INN[8][2] = {{32,14},{44,24},{50,32},{44,40},
-                                   {32,50},{20,40},{14,32},{20,24}};
-  static const int8_t IN_SH[8] = {2,1,3,6,3,1,2,4};
-  static const int8_t GEM[] = {32,20, 38,32, 32,44, 26,32};
-  static const int8_t CORE[] = {32,26, 35,32, 32,38, 29,32};
+  // GLOSSY LEVIATHAN (board 4-B, MSX route): diamond lattice rings
+  // with struts and chevrons around a square gem core. Indices stay
+  // within {1,2,3,4,6} so the design holds under the BPAL {9,10,15}
+  // rotation and the block-13 hit flash: 1 lattice light, 2 white,
+  // 3 dark, 4 core, 6 inner shade.
+  static const int8_t CHN[] = {27,16, 37,16, 32,10};
+  static const int8_t CHS[] = {27,48, 37,48, 32,54};
+  static const int8_t CHW[] = {16,27, 16,37, 10,32};
+  static const int8_t CHE[] = {48,27, 48,37, 54,32};
   int gx = x + PAT_OX, gy = y + PAT_OY;
+  int dx = gx - 32, dy = gy - 32;
+  int d = iabs_(dx) + iabs_(dy);
   if ((gx == 32 && gy == 4) || (gx == 58 && gy == 32) ||
       (gx == 32 && gy == 60) || (gx == 6 && gy == 32)) return 2;
-  if (in_poly(gx, gy, CORE, 4)) return 4;
-  if (in_poly(gx, gy, GEM, 4)) return 2;
-  for (int i = 0; i < 8; i++) {
-    int8_t tri[6] = {32, 32, INN[i][0], INN[i][1],
-                     INN[(i + 1) & 7][0], INN[(i + 1) & 7][1]};
-    if (in_poly(gx, gy, tri, 3)) return IN_SH[i];
+  if (iabs_(dx) <= 6 && iabs_(dy) <= 6) {          /* square core */
+    if (dx >= -4 && dx <= -3 && dy >= -4 && dy <= -3) return 2;
+    return dy >= 4 ? 3 : 4;
   }
-  { int dx = gx - 32, dy = gy - 32; if (iabs_(dx) + iabs_(dy) <= 20) return 6; }
-  for (int i = 0; i < 8; i++) {
-    int8_t tri[6] = {32, 32, RIM[i][0], RIM[i][1],
-                     RIM[(i + 1) & 7][0], RIM[(i + 1) & 7][1]};
-    if (in_poly(gx, gy, tri, 3)) return OUT_SH[i];
-  }
+  if (iabs_(dx) <= 8 && iabs_(dy) <= 8) return 3;  /* core frame */
+  if (in_poly(gx, gy, CHN, 3)) return 1;
+  if (in_poly(gx, gy, CHS, 3)) return 1;
+  if (in_poly(gx, gy, CHW, 3)) return 1;
+  if (in_poly(gx, gy, CHE, 3)) return 1;
+  if (d >= 27 && d <= 31) return dy >= 18 ? 3 : 1; /* outer ring */
+  if (d >= 21 && d <= 26 &&
+      iabs_(iabs_(dx) - iabs_(dy)) <= 1) return 3; /* struts */
+  if (d >= 19 && d <= 22) return dy <= -12 ? 1 : 6;/* inner ring */
   return 0;
 }
 static int idx_shard(int x, int y) {
-  // CRYSTAL CONSTRUCT (design board C): bright crystal shard, lit
-  // from NW. Drawn with palette block 5 (changed from 10 in the
-  // render code) so the shard reads as a cyan prism orbiting the
-  // boss; indices stay within block 5 / block 13 (flash).
-  static const int8_t DIA[] = {8,0, 15,8, 8,15, 0,8};
-  static const int8_t F1[] = {8,0, 15,8, 8,8, 6,5};
-  static const int8_t F2[] = {8,0, 0,8, 6,5, 8,8};
-  static const int8_t SWF[] = {0,8, 8,15, 8,8};
-  static const int8_t SEF[] = {15,8, 8,15, 8,8};
-  static const int8_t CORE[] = {8,6, 9,8, 8,9, 7,8};
+  // GLOSSY shard (board 4-B, MSX route): tall cyan spindle with a
+  // magenta waist band, drawn with palette block 5 (1 cyan, 5 pale,
+  // 2 white, 6 shade, 4 band).
+  static const int8_t DIA[] = {8,0, 13,6, 13,10, 8,15, 3,10, 3,6};
+  static const int8_t LF[] = {8,0, 3,6, 3,10, 8,15, 8,8};
+  static const int8_t RF[] = {8,0, 13,6, 13,10, 8,15, 8,8};
   if (x == 6 && y == 3) return 2;
-  if (in_poly(x, y, CORE, 4)) return 4;
-  if (in_poly(x, y, SEF, 3)) return 6;
-  if (in_poly(x, y, SWF, 3)) return 3;
-  if (in_poly(x, y, F2, 4)) return 2;
-  if (in_poly(x, y, F1, 4)) return 5;
-  if (in_poly(x, y, DIA, 4)) return 1;
+  if ((y == 7 || y == 8) && in_poly(x, y, DIA, 6)) return 4;
+  if (in_poly(x, y, LF, 5)) return 5;
+  if (in_poly(x, y, RF, 5)) return 6;
+  if (in_poly(x, y, DIA, 6)) return y >= 11 ? 6 : 1;
   return 0;
 }
 static int idx_shield_t(int x, int y) {
+  // GLOSSY HALO ring (board 1-B): bright top arc fading to a deep
+  // teal underside. Block 14: 1 teal, 2 white, 3 deep.
   int gx = x + PAT_OX, gy = y + PAT_OY;
   int dx = gx - 24, dy = gy - 16;
   int e = dx * dx * 225 + dy * dy * 529;
-  if (e >= 92000 && e <= 148000)
-    return (dy < 0 && (gx == 24 || gx == 6 || gx == 42)) ? 2 : 1;
-  return 0;
+  if (e < 92000 || e > 148000) return 0;
+  if (e >= 128000) return dy < 0 ? 2 : 1;
+  if (e >= 108000) return 1;
+  return dy < 0 ? 1 : 3;
 }
 
 typedef int (*PatFn)(int, int);
@@ -1069,8 +1123,13 @@ static const PatDef PAT_DEFS[] = {
 };
 static int g_item_ch = 'S';
 static int idx_item_letter(int x, int y) {
-  if (x < 2 || x > 13 || y < 3 || y > 12) return 0;
+  // GLOSSY capsule (board 5-B): dark outline, bright frame, tinted
+  // interior, coloured glyph. Indices must exist in every ITEM_PAL
+  // block {7,2,3,5,12,4,11}: 3 outline, 2 frame, 1 interior, 4 glyph.
+  if (x < 1 || x > 14 || y < 2 || y > 13) return 0;
+  if (x == 1 || x == 14 || y == 2 || y == 13) return 3;
   if (x == 2 || x == 13 || y == 3 || y == 12) return 2;
+  if (x == 4 && y == 5) return 2;   /* gloss dot */
   int gx = x - 4, gy = y - 4;
   if (gx >= 0 && gx < 8 && gy >= 0 && gy < 8) {
     const uint8_t *g = FONT8[g_item_ch - 0x20];
@@ -1080,18 +1139,20 @@ static int idx_item_letter(int x, int y) {
 }
 static int idx_item_shield(int x, int y) {
   int dx = x - 8, dy = y - 8, d2 = dx * dx + dy * dy;
+  if (d2 >= 50 && d2 <= 64) return 3;
   if (d2 >= 30 && d2 <= 49) return 2;
   if ((dx == 0 && dy >= -4 && dy <= 4) || (dy == 0 && dx >= -4 && dx <= 4))
     return 2;
+  if (d2 <= 2) return 4;
   if (d2 < 30) return 1;
   return 0;
 }
 static int idx_item_star(int x, int y) {
   int dx = x - 8, dy = y - 8, adx = iabs_(dx), ady = iabs_(dy);
+  if (adx <= 1 && ady <= 1) return 2;
   if (dx == 0 && ady <= 6) return 1;
   if (dy == 0 && adx <= 6) return 1;
-  if (adx == ady && adx <= 4 && adx > 0) return 4;
-  if (adx <= 1 && ady <= 1) return 2;
+  if (adx == ady && adx <= 4 && adx > 0) return 7;
   return 0;
 }
 
@@ -1179,32 +1240,32 @@ static const PalDef PAL_DEFS[] = {
   {8,15,GRB(11,21,30)},{9,15,GRB(31,31,31)},{10,15,GRB(4,9,20)},
   {11,15,GRB(20,26,28)},{12,15,GRB(7,16,29)},{13,15,GRB(5,12,26)},
   {14,15,GRB(26,30,31)},
-  {1,1,GRB(13,20,27)},{2,1,GRB(27,31,31)},{3,1,GRB(5,8,14)},
-  {4,1,GRB(6,28,31)},{5,1,GRB(31,18,2)},{6,1,GRB(8,13,20)},{7,1,GRB(31,26,6)},
-  {8,1,GRB(20,26,30)},
-  {1,2,GRB(28,10,6)},{2,2,GRB(31,31,31)},{3,2,GRB(20,5,9)},
-  {4,2,GRB(31,24,4)},{5,2,GRB(31,16,2)},{6,2,GRB(12,3,5)},{7,2,GRB(31,16,10)},
-  {1,3,GRB(20,8,28)},{2,3,GRB(29,17,31)},{3,3,GRB(10,4,16)},
-  {4,3,GRB(31,24,4)},{5,3,GRB(31,8,24)},{6,3,GRB(6,2,10)},{7,3,GRB(24,12,30)},
-  {1,4,GRB(8,20,22)},{2,4,GRB(19,30,30)},{3,4,GRB(3,9,12)},
-  {4,4,GRB(31,8,8)},{5,4,GRB(31,20,4)},{6,4,GRB(2,5,8)},{7,4,GRB(12,24,26)},
-  {8,4,GRB(24,31,31)},
+  {1,1,GRB(0,22,25)},{2,1,GRB(31,31,31)},{3,1,GRB(1,3,10)},
+  {4,1,GRB(18,30,31)},{5,1,GRB(31,16,2)},{6,1,GRB(0,13,17)},{7,1,GRB(31,26,8)},
+  {8,1,GRB(12,29,30)},
+  {1,2,GRB(29,25,3)},{2,2,GRB(31,31,31)},{3,2,GRB(21,15,2)},
+  {4,2,GRB(31,19,3)},{5,2,GRB(31,15,2)},{6,2,GRB(13,3,9)},{7,2,GRB(31,29,11)},
+  {1,3,GRB(3,24,5)},{2,3,GRB(26,31,26)},{3,3,GRB(2,12,3)},
+  {4,3,GRB(31,26,4)},{5,3,GRB(31,8,24)},{6,3,GRB(1,6,2)},{7,3,GRB(17,31,17)},
+  {1,4,GRB(26,6,24)},{2,4,GRB(31,22,29)},{3,4,GRB(15,3,13)},
+  {4,4,GRB(31,6,8)},{5,4,GRB(31,20,4)},{6,4,GRB(8,1,7)},{7,4,GRB(29,13,27)},
+  {8,4,GRB(31,31,31)},
   {1,5,GRB(6,24,29)},{2,5,GRB(31,31,31)},{3,5,GRB(3,10,18)},
-  {4,5,GRB(31,10,26)},{5,5,GRB(10,20,31)},{6,5,GRB(4,16,22)},{7,5,GRB(31,26,6)},
-  {1,6,GRB(17,9,29)},{2,6,GRB(31,31,31)},{3,6,GRB(8,4,18)},
-  {4,6,GRB(31,24,4)},{5,6,GRB(24,12,31)},{6,6,GRB(11,6,20)},{7,6,GRB(6,28,30)},
-  {1,7,GRB(29,22,5)},{2,7,GRB(31,31,31)},{3,7,GRB(16,10,2)},
-  {4,7,GRB(31,8,14)},{5,7,GRB(31,28,10)},{6,7,GRB(20,14,3)},{7,7,GRB(8,26,30)},
-  {1,8,GRB(14,12,24)},{2,8,GRB(26,25,31)},{3,8,GRB(9,8,18)},
-  {4,8,GRB(6,28,30)},{5,8,GRB(31,18,2)},{6,8,GRB(5,4,10)},{7,8,GRB(31,10,10)},
-  {8,8,GRB(20,18,28)},{9,8,GRB(24,31,31)},
+  {4,5,GRB(31,10,26)},{5,5,GRB(18,29,31)},{6,5,GRB(4,15,21)},{7,5,GRB(31,26,6)},
+  {1,6,GRB(19,10,29)},{2,6,GRB(31,31,31)},{3,6,GRB(9,4,17)},
+  {4,6,GRB(31,24,4)},{5,6,GRB(26,15,31)},{6,6,GRB(12,6,21)},{7,6,GRB(6,28,30)},
+  {1,7,GRB(28,21,4)},{2,7,GRB(31,31,31)},{3,7,GRB(15,9,2)},
+  {4,7,GRB(31,9,15)},{5,7,GRB(31,27,9)},{6,7,GRB(19,13,3)},{7,7,GRB(8,26,30)},
+  {1,8,GRB(5,9,28)},{2,8,GRB(24,29,31)},{3,8,GRB(3,5,17)},
+  {4,8,GRB(31,7,7)},{5,8,GRB(31,18,2)},{6,8,GRB(2,3,10)},{7,8,GRB(31,17,3)},
+  {8,8,GRB(13,18,31)},{9,8,GRB(31,31,31)},
   {1,9,GRB(8,22,28)},{2,9,GRB(28,31,31)},{3,9,GRB(4,10,16)},
   {4,9,GRB(31,26,6)},{6,9,GRB(6,16,20)},
   {1,10,GRB(24,12,26)},{2,10,GRB(31,31,31)},{3,10,GRB(12,6,14)},
   {4,10,GRB(31,10,10)},{6,10,GRB(16,8,18)},
   {1,11,GRB(31,30,12)},{2,11,GRB(31,31,31)},{3,11,GRB(20,8,8)},
   {4,11,GRB(31,9,15)},{5,11,GRB(23,23,27)},{6,11,GRB(31,17,2)},{7,11,GRB(31,24,4)},
-  {1,12,GRB(31,10,10)},{2,12,GRB(31,31,31)},{3,12,GRB(6,26,28)},
+  {1,12,GRB(2,6,16)},{2,12,GRB(31,31,31)},{3,12,GRB(8,28,30)},
   {4,12,GRB(31,10,26)},{5,12,GRB(31,26,6)},{6,12,GRB(31,17,2)},{7,12,GRB(10,30,10)},
   {1,13,GRB(31,31,31)},{2,13,GRB(31,31,31)},
   {3,13,GRB(31,31,31)},{4,13,GRB(31,31,31)},{5,13,GRB(31,31,31)},
@@ -1212,7 +1273,7 @@ static const PalDef PAL_DEFS[] = {
   {8,13,GRB(31,31,31)},{9,13,GRB(31,31,31)},{10,13,GRB(31,31,31)},
   {11,13,GRB(31,31,31)},{12,13,GRB(31,31,31)},{13,13,GRB(31,31,31)},
   {14,13,GRB(31,31,31)},
-  {1,14,GRB(9,27,30)},{2,14,GRB(31,31,31)},
+  {1,14,GRB(9,27,30)},{2,14,GRB(31,31,31)},{3,14,GRB(3,12,15)},
   {1,15,GRB(10,26,12)},{2,15,GRB(31,31,31)},{3,15,GRB(5,14,7)},
   {4,15,GRB(31,14,26)},{6,15,GRB(7,18,9)},
 };
@@ -1236,12 +1297,18 @@ public:
     set_60hz();
     _iocs_b_clr_al();
     _iocs_b_curoff();
-    Gfx::text_center(228, 1, GRB(18, 20, 22), "LOADING...");
+    Gfx::text_center(200, 2, GRB(18, 24, 28), "NOW LOADING");
+    Gfx::fill(156, 232, 356, 246, GRB(8, 14, 18));
+    load_progress(0);
     stars_init();
+    load_progress(3);
     build_bg_cache();
+    load_progress(68);
     g_fm.init();
+    load_progress(72);
     sprites_init();
     frame_sync_init();
+    load_progress(100);
     to_title();
     for (;;) {
       Input in = poll_input();
@@ -1627,12 +1694,11 @@ private:
 
   /* ---------------- title ---------------- */
   void draw_title_logo() {
-    /* Title-only backdrop (MSX route): paint over the in-game Earth
-       tile with plain space, blit the big title Earth disc, then the
-       B logo -- echo stamps, the pink beam and its ship. The RAM
-       bg cache itself is never touched, so every other screen keeps
-       restoring exactly as before. */
-    paint_base_bg_rect(284, 134, 493, 343);
+    /* Title-only backdrop (MSX route): the RAM bg cache is PLAIN at
+       this point (the in-game Earth is composed in only while a game
+       runs, and to_title restores the plain rect first), so the big
+       title Earth disc blits straight over the copied background,
+       then the B logo -- echo stamps, the pink beam and its ship. */
     blit_title_earth(0, 0, SCR_W - 1, SCR_H - 1);
     stamp_logo_b(-14, GRB(0, 8, 10));
     stamp_logo_b(-7, GRB(0, 13, 13));
@@ -1642,6 +1708,7 @@ private:
     blit_keyed(SHIP_B_IMG, SHIP_B_W, SHIP_B_H, SHIP_B_X, SHIP_B_Y);
   }
   void to_title() {
+    if (bg_cache_has_earth) { bg_restore_plain_rect(); bg_cache_has_earth = false; }
     demo_mode_ = false; title_idle_ = 0;
     sprites_set_visible(false);
     state_ = State::Title; phase_ = Phase::Normal; paused_ = false;
@@ -1660,7 +1727,6 @@ private:
   void draw_press(bool visible) {
     if (!visible) {
       restore_bg(56, 332, 456, 356);
-      paint_base_bg_rect(284, 332, 456, 343);
       blit_title_earth(56, 332, 456, 356);
       return;
     }
@@ -1743,6 +1809,7 @@ private:
       _iocs_spalet(PAL_DEFS[i].idx, PAL_DEFS[i].block, PAL_DEFS[i].c);
     static uint8_t pat[128];
     for (unsigned i = 0; i < sizeof(PAT_DEFS) / sizeof(PAT_DEFS[0]); i++) {
+      load_progress(75 + (int)(i * 18 / (sizeof(PAT_DEFS) / sizeof(PAT_DEFS[0]))));
       PAT_OX = PAT_DEFS[i].ox; PAT_OY = PAT_DEFS[i].oy;
       build_pat16(pat, PAT_DEFS[i].fn);
       _iocs_sp_defcg((int)i * 4, 1, pat);
@@ -2259,7 +2326,7 @@ private:
           volatile uint16_t *g = &GVRAM[(y - halfw) * GV_STRIDE + x];
           const uint16_t *b = &bg_cache[y - halfw][x];
           for (int o = -halfw; o <= halfw; o++) {
-            *g = erase ? *b : (o == 0 ? core : glow);
+            *g = erase ? *b : (o == 0 ? core : (iabs_(o) == halfw ? shade(glow, -9) : glow));
             g += GV_STRIDE; b += SCR_W;
 #ifdef STG_TEST
             bench_writes_++;
@@ -2271,7 +2338,7 @@ private:
             int yy = y + o;
             if (yy < 50 || yy >= 432) continue;
             GVRAM[yy * GV_STRIDE + x] =
-                erase ? bg_cache[yy][x] : (o == 0 ? core : glow);
+                erase ? bg_cache[yy][x] : (o == 0 ? core : (iabs_(o) == halfw ? shade(glow, -9) : glow));
 #ifdef STG_TEST
             bench_writes_++;
 #endif
@@ -2294,7 +2361,7 @@ private:
           volatile uint16_t *g = &GVRAM[y * GV_STRIDE + (x - halfw)];
           const uint16_t *b = &bg_cache[y][x - halfw];
           for (int o = -halfw; o <= halfw; o++) {
-            *g = erase ? *b : (o == 0 ? core : glow);
+            *g = erase ? *b : (o == 0 ? core : (iabs_(o) == halfw ? shade(glow, -9) : glow));
             g++; b++;
 #ifdef STG_TEST
             bench_writes_++;
@@ -2306,7 +2373,7 @@ private:
             int xx = x + o;
             if (xx < 0 || xx >= SCR_W) continue;
             GVRAM[y * GV_STRIDE + xx] =
-                erase ? bg_cache[y][xx] : (o == 0 ? core : glow);
+                erase ? bg_cache[y][xx] : (o == 0 ? core : (iabs_(o) == halfw ? shade(glow, -9) : glow));
 #ifdef STG_TEST
             bench_writes_++;
 #endif
@@ -2376,7 +2443,7 @@ private:
           if (curv < 0) curv = -curv;
           uint16_t glow, core;
           if (prism) { glow = GRB(12, 24, 31); core = COL_WHITE; }
-          else if (curv < 2) { glow = GRB(4, 26, 30); core = GRB(24, 31, 31); }
+          else if (curv < 2) { glow = GRB(4, 26, 30); core = COL_WHITE; }
           else if (curv < 6) { glow = GRB(6, 30, 14); core = COL_WHITE; }
           else if (curv < 12) { glow = GRB(28, 8, 28); core = COL_WHITE; }
           else { glow = GRB(31, 22, 2); core = COL_WHITE; }
@@ -2410,7 +2477,7 @@ private:
           if (curv < 0) curv = -curv;
           uint16_t glow, core;
           if (prism) { glow = GRB(12, 24, 31); core = COL_WHITE; }
-          else if (curv < 2) { glow = GRB(4, 26, 30); core = GRB(24, 31, 31); }
+          else if (curv < 2) { glow = GRB(4, 26, 30); core = COL_WHITE; }
           else if (curv < 6) { glow = GRB(6, 30, 14); core = COL_WHITE; }
           else if (curv < 12) { glow = GRB(28, 8, 28); core = COL_WHITE; }
           else { glow = GRB(31, 22, 2); core = COL_WHITE; }
@@ -2565,6 +2632,7 @@ private:
 
   /* ---------------- flow ---------------- */
   void redraw_all() {
+    if (!bg_cache_has_earth) { bg_compose_earth(); bg_cache_has_earth = true; }
     draw_background(); draw_hud(); draw_gauge();
     for (int i = 0; i < 20; i++) enemies_[i].drawn = false;
     for (int i = 0; i < 40; i++) pbullets_[i].drawn = false;

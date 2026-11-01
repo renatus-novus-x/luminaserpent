@@ -111,8 +111,8 @@ and emits the tile header.
 - Emulator: load `dist/luminaserpent.xdf` (included, 2HD, 1,261,568 bytes) as FDD0
   and boot. In [WebX68k](https://uraraworks.github.io/WebX68k/),
   insert the image and use the "boot with the inserted disk" button.
-  The title appears after a few seconds (a LOADING… note shows while
-  the background is prepared).
+  The title appears after a few seconds (a NOW LOADING screen with a
+  progress bar shows while the background is prepared).
 - Real hardware: write the image to a 2HD floppy and boot from it.
 
 ## Files
