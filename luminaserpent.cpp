@@ -21,7 +21,8 @@
 
 #include <x68k/iocs.h>
 #include "earth_bg.h"
-#include "logo_title.h"
+#include "logo_title_b.h"
+#include "title_earth.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -248,15 +249,77 @@ static void blit_bg_rect(int x1, int y1, int x2, int y2) {
   }
 }
 
-/* Pre-rendered title logo (logo_title.h, AI-generated art): keyed
-   blit, 0x0000 = transparent, drawn once per title entry. */
-static void blit_logo_img(int x, int y) {
-  for (int r = 0; r < LOGO_H; r++) {
-    const uint16_t *src = &LOGO_IMG[r * LOGO_W];
+/* Generic keyed blit (0x0000 = transparent), used for the beam ship. */
+static void blit_keyed(const uint16_t *img, int w, int h, int x, int y) {
+  for (int r = 0; r < h; r++) {
+    const uint16_t *src = img + r * w;
     volatile uint16_t *dst = GVRAM + (y + r) * GV_STRIDE + x;
-    for (int c = 0; c < LOGO_W; c++) {
+    for (int c = 0; c < w; c++) {
       uint16_t v = src[c];
       if (v) dst[c] = v;
+    }
+  }
+}
+
+/* B-design title logo (logo_title_b.h): a 1-bit outline mask, decoded
+   once from its PackBits stream, then stamped in flat tones -- the
+   two echoes at x-14 / x-7 reproduce the doubled letterforms of the
+   approved design (same trick as the MSX build's baked logo). */
+static uint8_t logo_b_bits[LOGO_B_H][LOGO_B_W / 8];
+static bool logo_b_ready = false;
+static void logo_b_unpack() {
+  if (logo_b_ready) return;
+  logo_b_ready = true;
+  const uint8_t *p = LOGO_B_MASK_PACKED;
+  for (int r = 0; r < LOGO_B_H; r++) {
+    int produced = 0;
+    const int need = LOGO_B_W / 8;
+    while (produced < need) {
+      uint8_t hdr = *p++;
+      if (hdr <= 127) {
+        int n = hdr + 1;
+        memcpy(&logo_b_bits[r][produced], p, n);
+        p += n; produced += n;
+      } else {
+        int n = 257 - hdr;
+        uint8_t v = *p++;
+        memset(&logo_b_bits[r][produced], v, n);
+        produced += n;
+      }
+    }
+  }
+}
+static void stamp_logo_b(int dx, uint16_t color) {
+  logo_b_unpack();
+  for (int r = 0; r < LOGO_B_H; r++) {
+    volatile uint16_t *dst = GVRAM + (LOGO_B_Y + r) * GV_STRIDE;
+    const uint8_t *bits = logo_b_bits[r];
+    for (int c = 0; c < LOGO_B_W; c++)
+      if (bits[c >> 3] & (0x80 >> (c & 7))) {
+        int xx = dx + c;
+        if (xx >= 0 && xx < SCR_W) dst[xx] = color;
+      }
+  }
+}
+
+/* Title Earth disc (title_earth.h): half-resolution tile blitted 2x
+   like the in-game Earth, keyed, clipped to the given screen rect. */
+static void blit_title_earth(int cx1, int cy1, int cx2, int cy2) {
+  const int OX = 88, OY = 244;
+  for (int ty = 0; ty < TITLE_EARTH_H; ty++) {
+    int sy = OY + ty * 2;
+    if (sy + 1 < cy1 || sy > cy2) continue;
+    for (int tx = 0; tx < TITLE_EARTH_W; tx++) {
+      uint16_t c = TITLE_EARTH[ty * TITLE_EARTH_W + tx];
+      if (!c) continue;
+      int sx = OX + tx * 2;
+      if (sx + 1 < cx1 || sx > cx2) continue;
+      for (int dy = 0; dy < 2; dy++)
+        for (int dx = 0; dx < 2; dx++) {
+          int px = sx + dx, py = sy + dy;
+          if (px < cx1 || px > cx2 || py < cy1 || py > cy2) continue;
+          GVRAM[py * GV_STRIDE + px] = c;
+        }
     }
   }
 }
@@ -321,6 +384,23 @@ public:
   }
   static void text_center(int y, int scale, uint16_t color, const char *s) {
     text((SCR_W - text_width(s, scale)) / 2, y, scale, color, s);
+  }
+  /* centred text with an explicit advance (for lines too wide for
+     the standard advance at scale 2, e.g. the title subtitle) */
+  static void text_center_adv(int y, int scale, int adv, uint16_t color, const char *s) {
+    int n = (int)strlen(s);
+    int x = (SCR_W - (n ? (n - 1) * adv + 8 * scale : 0)) / 2;
+    for (int i = 0; s[i]; i++) {
+      const uint8_t *g = glyph_for(s[i]);
+      for (int row = 0; row < 8; row++) {
+        uint8_t bits = g[row];
+        for (int col = 0; col < 8; col++)
+          if (bits & (0x80 >> col))
+            fill(x + col * scale, y + row * scale,
+                 x + col * scale + scale - 1, y + row * scale + scale - 1, color);
+      }
+      x += adv;
+    }
   }
   static void number(int x, int y, int scale, uint16_t color, int value, int width) {
     char buf[16];
@@ -389,24 +469,27 @@ static int noise2s(int x, int y, int shift) {
 }
 static int clamp255(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 
+/* nebula tint grids (filled by build_bg_cache, reused by
+   base_bg_pixel so title overlays can repaint plain space) */
+static int bg_tint_r[61][65], bg_tint_b[61][65];
+
 static void build_bg_cache() {
   lattice_init();
   /* faint nebula tint on a coarse grid */
-  static int tint_r[61][65], tint_b[61][65];
   for (int gy = 0; gy < 61; gy++)
     for (int gx = 0; gx < 65; gx++) {
       int n1 = noise2s(gx * 8 + 977 * 11, gy * 8 + 631 * 11, 8);
       int n2 = noise2s(gx * 8 + 977 * 12, gy * 8 + 631 * 12, 8);
-      tint_r[gy][gx] = n1 > 170 ? (n1 - 170) / 42 : 0;   /* faint purple wash */
-      tint_b[gy][gx] = n2 > 170 ? (n2 - 170) / 34 : 0;   /* faint teal wash */
+      bg_tint_r[gy][gx] = n1 > 170 ? (n1 - 170) / 42 : 0;   /* faint purple wash */
+      bg_tint_b[gy][gx] = n2 > 170 ? (n2 - 170) / 34 : 0;   /* faint teal wash */
     }
   /* gradient + tint (tint lerped vertically per row, grid lookup across) */
   for (int y = 0; y < SCR_H; y++) {
     int gy = y >> 3, fy = y & 7;
     int row_tr[65], row_tb[65];
     for (int gx = 0; gx < 65; gx++) {
-      row_tr[gx] = (tint_r[gy][gx] * (8 - fy) + tint_r[gy + 1][gx] * fy) / 8;
-      row_tb[gx] = (tint_b[gy][gx] * (8 - fy) + tint_b[gy + 1][gx] * fy) / 8;
+      row_tr[gx] = (bg_tint_r[gy][gx] * (8 - fy) + bg_tint_r[gy + 1][gx] * fy) / 8;
+      row_tb[gx] = (bg_tint_b[gy][gx] * (8 - fy) + bg_tint_b[gy + 1][gx] * fy) / 8;
     }
     uint16_t c = bg_color(y);
     int cr = ((c >> 6) & 31) * 8, cg = ((c >> 11) & 31) * 8, cb = ((c >> 1) & 31) * 8;
@@ -460,6 +543,27 @@ static void restore_bg(int x1, int y1, int x2, int y2) {
   blit_bg_rect(x1, y1, x2, y2);
 }
 static void draw_background() { blit_bg_rect(0, 0, SCR_W - 1, SCR_H - 1); }
+
+/* One pixel of the plain space background (gradient + nebula tint +
+   jitter, no stars, no Earth), computed exactly as build_bg_cache
+   does. The title screen uses it to paint over the in-game Earth
+   tile before drawing its own Earth disc. */
+static uint16_t base_bg_pixel(int x, int y) {
+  int gy = y >> 3, fy = y & 7, gx = x >> 3;
+  int tr = (bg_tint_r[gy][gx] * (8 - fy) + bg_tint_r[gy + 1][gx] * fy) / 8;
+  int tb = (bg_tint_b[gy][gx] * (8 - fy) + bg_tint_b[gy + 1][gx] * fy) / 8;
+  uint16_t c = bg_color(y);
+  int cr = ((c >> 6) & 31) * 8, cg = ((c >> 11) & 31) * 8, cb = ((c >> 1) & 31) * 8;
+  int jit = (int)((x * 73 + y * 149) & 7) - 4;
+  return GRB(clamp255(cr + tr * 8 + jit) >> 3,
+             clamp255(cg + jit) >> 3,
+             clamp255(cb + tb * 8 + jit) >> 3);
+}
+static void paint_base_bg_rect(int x1, int y1, int x2, int y2) {
+  for (int y = y1; y <= y2; y++)
+    for (int x = x1; x <= x2; x++)
+      GVRAM[y * GV_STRIDE + x] = base_bg_pixel(x, y);
+}
 static uint16_t shade(uint16_t c, int d) {
   int r = ((c >> 6) & 31) + d, g = ((c >> 11) & 31) + d, b = ((c >> 1) & 31) + d;
   if (r < 0) r = 0; if (r > 31) r = 31;
@@ -1523,8 +1627,19 @@ private:
 
   /* ---------------- title ---------------- */
   void draw_title_logo() {
-    restore_bg(24, 48, 488, 200);
-    blit_logo_img(28, 56);
+    /* Title-only backdrop (MSX route): paint over the in-game Earth
+       tile with plain space, blit the big title Earth disc, then the
+       B logo -- echo stamps, the pink beam and its ship. The RAM
+       bg cache itself is never touched, so every other screen keeps
+       restoring exactly as before. */
+    paint_base_bg_rect(284, 134, 493, 343);
+    blit_title_earth(0, 0, SCR_W - 1, SCR_H - 1);
+    stamp_logo_b(-14, GRB(0, 8, 10));
+    stamp_logo_b(-7, GRB(0, 13, 13));
+    stamp_logo_b(0, GRB(0, 28, 28));
+    Gfx::fill(0, 131, 511, 133, GRB(31, 11, 20));
+    Gfx::fill(0, 132, 511, 132, COL_WHITE);
+    blit_keyed(SHIP_B_IMG, SHIP_B_W, SHIP_B_H, SHIP_B_X, SHIP_B_Y);
   }
   void to_title() {
     demo_mode_ = false; title_idle_ = 0;
@@ -1534,18 +1649,22 @@ private:
     title_cycle_ = 0;
     draw_background();
     draw_title_logo();
-    Gfx::text_center(272, 2, GRB(10, 24, 28), "THE LIGHT SERPENT AWAKENS");
-    Gfx::text_center(306, 1, GRB(18, 24, 28), "BEND THE LASER - FEED THE RESONANCE");
-    Gfx::text_center(322, 1, GRB(18, 24, 28), "BREAK THE PRISM CRYSTALS - REACH PRISM BURST");
+    Gfx::fill(0, 286, 511, 311, GRB(1, 2, 7));
+    Gfx::text_center_adv(290, 2, 14, GRB(14, 28, 28), "BEND THE LASER - FEED THE RESONANCE");
     press_visible_ = true;
-    Gfx::text_center(356, 2, COL_WHITE, "PRESS SPACE OR PAD BTN");
-    Gfx::text_center(404, 1, GRB(16, 22, 26), "MOVE : CURSOR / WASD / PAD");
-    Gfx::text_center(422, 1, GRB(16, 22, 26), "SHOT : Z / SPACE    FLY INTO ITEMS TO POWER UP");
-    Gfx::text_center(440, 1, GRB(16, 22, 26), "P : PAUSE   M : SOUND   ESC : TITLE/EXIT");
+    Gfx::text_center(336, 2, GRB(31, 11, 20), "PRESS SPACE OR PAD BTN");
+    Gfx::text_center(396, 1, GRB(20, 24, 28), "CURSOR / WASD / PAD : MOVE");
+    Gfx::text_center(418, 1, GRB(20, 24, 28), "Z / SPACE / TRIGGER : SHOT");
+    Gfx::text_center(442, 1, GRB(12, 16, 20), "P : PAUSE   M : SOUND   ESC : TITLE/EXIT");
   }
   void draw_press(bool visible) {
-    if (!visible) { restore_bg(56, 352, 456, 374); return; }
-    Gfx::text_center(356, 2, COL_WHITE, "PRESS SPACE OR PAD BTN");
+    if (!visible) {
+      restore_bg(56, 332, 456, 356);
+      paint_base_bg_rect(284, 332, 456, 343);
+      blit_title_earth(56, 332, 456, 356);
+      return;
+    }
+    Gfx::text_center(336, 2, GRB(31, 11, 20), "PRESS SPACE OR PAD BTN");
   }
 
   /* ---------------- spawning ---------------- */
