@@ -67,7 +67,7 @@ drones), **HALO** (shield), plus bonus stars.
   (shards, the dying barrage, the final blast and the post-whiteout
   bloom). Four span-encoded animations (15 frames each, 230 KB) in
   `explosion_fx.h`; the total footprint stays within 1 MB RAM
-  machines (1,037,030 bytes of text+data+bss)
+  machines (1,037,798 bytes of text+data+bss)
 - Refreshed sprites: the ship, options, item capsules and shots
   are ported from the MSX version's artwork, while enemies, the
   carrier, the boss and its shards use redrawn art with outlines
