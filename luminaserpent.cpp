@@ -604,17 +604,57 @@ static void bg_compose_earth() {
   }
 }
 
-/* NOW LOADING progress bar (boot only): dark track + cyan fill.
-   No percent number: at 8x8 scale 1 the digits read as garbled
-   boxes on small screens, so the bar alone shows progress.
+/* NOW LOADING caption: the 8x8 font stamped at x3 through a mask,
+   with corner smoothing (an empty cell wedged between two filled
+   orthogonal neighbours is plotted half-tone), so the letters read
+   finer than a raw blocky stamp. */
+static void load_caption() {
+  static const char text[] = "NOW LOADING";
+  const int scale = 3, adv = 8 * scale + 2;
+  const int n = (int)sizeof(text) - 1;
+  const int W = (n - 1) * adv + 8 * scale, H = 8 * scale;
+  const uint16_t c_main = GRB(19, 26, 30), c_mid = GRB(8, 13, 17);
+  int x0 = (SCR_W - W) / 2, y0 = 188;
+  /* per-glyph mask: the 2px letter gap is always empty, so corner
+     smoothing never crosses a glyph boundary */
+  static uint8_t mask[24][24];
+  for (int i = 0; i < n; i++) {
+    const uint8_t *g = glyph_for(text[i]);
+    for (int y = 0; y < H; y++)
+      for (int x = 0; x < 24; x++) mask[y][x] = 0;
+    for (int row = 0; row < 8; row++)
+      for (int col = 0; col < 8; col++)
+        if (g[row] & (0x80 >> col))
+          for (int dy = 0; dy < scale; dy++)
+            for (int dx = 0; dx < scale; dx++)
+              mask[row * scale + dy][col * scale + dx] = 1;
+    int gx = x0 + i * adv;
+    for (int y = 0; y < H; y++)
+      for (int x = 0; x < 24; x++) {
+        if (mask[y][x]) { Gfx::pset(gx + x, y0 + y, c_main); continue; }
+        bool l = x > 0 && mask[y][x - 1], r = x + 1 < 24 && mask[y][x + 1];
+        bool u = y > 0 && mask[y - 1][x], d = y + 1 < H && mask[y + 1][x];
+        if ((l && u) || (r && u) || (l && d) || (r && d))
+          Gfx::pset(gx + x, y0 + y, c_mid);
+      }
+  }
+}
+
+/* NOW LOADING progress bar (boot only): framed track + two-tone
+   cyan fill. No percent number: at 8x8 scale 1 the digits read as
+   garbled boxes on small screens, so the bar alone shows progress.
    Called from the boot steps in Game::run and from the two long
    boot loops (background bake, sprite pattern bake). */
 static void load_progress(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
-  Gfx::fill(158, 234, 354, 244, GRB(1, 2, 5));
-  int w = pct * 196 / 100;
-  if (w > 0) Gfx::fill(158, 234, 158 + w - 1, 244, GRB(0, 24, 27));
+  Gfx::fill(112, 230, 400, 250, GRB(8, 14, 18));
+  Gfx::fill(114, 232, 398, 248, GRB(1, 2, 5));
+  int w = pct * 285 / 100;
+  if (w > 0) {
+    Gfx::fill(114, 232, 114 + w - 1, 239, GRB(0, 27, 30));
+    Gfx::fill(114, 240, 114 + w - 1, 248, GRB(0, 19, 23));
+  }
 }
 static uint16_t shade(uint16_t c, int d) {
   int r = ((c >> 6) & 31) + d, g = ((c >> 11) & 31) + d, b = ((c >> 1) & 31) + d;
@@ -1488,8 +1528,7 @@ public:
     set_60hz();
     _iocs_b_clr_al();
     _iocs_b_curoff();
-    Gfx::text_center(200, 2, GRB(18, 24, 28), "NOW LOADING");
-    Gfx::fill(156, 232, 356, 246, GRB(8, 14, 18));
+    load_caption();
     load_progress(0);
     stars_init();
     load_progress(3);
@@ -2307,7 +2346,7 @@ private:
     int sp = 2 + speed_level_ / 2; /* 2,2,3,3,4,4 px per frame */
     px_ += in.dx * sp;
     py_ += in.dy * sp;
-    if (px_ < 24) px_ = 24; if (px_ > 300) px_ = 300;
+    if (px_ < 24) px_ = 24; if (px_ > SCR_W - 24) px_ = SCR_W - 24;
     if (py_ < PLAY_Y0 + 24) py_ = PLAY_Y0 + 24;
     if (py_ > PLAY_Y1 - 14) py_ = PLAY_Y1 - 14;
     if (shot_cd_ > 0) shot_cd_--;
