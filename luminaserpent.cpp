@@ -23,6 +23,7 @@
 #include "earth_bg.h"
 #include "logo_title_b.h"
 #include "title_earth.h"
+#include "explosion_fx.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -257,6 +258,37 @@ static void blit_keyed(const uint16_t *img, int w, int h, int x, int y) {
     for (int c = 0; c < w; c++) {
       uint16_t v = src[c];
       if (v) dst[c] = v;
+    }
+  }
+}
+
+/* Baked explosion frames (explosion_fx.h): span-encoded GRB555 over
+   the bg colour. Draw writes the frame's visible pixels; erase puts
+   the same spans back from the background cache. */
+static void fx_blit(const FxKind &k, int cx, int cy, int frame, bool erase) {
+  int xb = cx - k.w / 2, yb = cy - k.h / 2;
+  const uint8_t *rc = k.rowct + frame * k.h;
+  uint32_t sp = k.foff[frame];
+  const uint16_t *pixbase = k.pix + k.poff[frame];
+  for (int r = 0; r < k.h; r++) {
+    int nsp = rc[r];
+    int y = yb + r;
+    for (int s = 0; s < nsp; s++) {
+      uint32_t e = k.spans[sp++];
+      if (y < 0 || y >= SCR_H) continue;
+      int sx = xb + (int)((e >> 16) & 0xFF);
+      int len = (int)((e >> 24) & 0xFF);
+      const uint16_t *src = pixbase + (e & 0xFFFF);
+      if (sx < 0) { src += -sx; len += sx; sx = 0; }
+      if (sx + len > SCR_W) len = SCR_W - sx;
+      if (len <= 0) continue;
+      volatile uint16_t *dst = GVRAM + y * GV_STRIDE + sx;
+      if (erase) {
+        const uint16_t *b = &bg_cache[y][sx];
+        for (int i = 0; i < len; i++) dst[i] = b[i];
+      } else {
+        for (int i = 0; i < len; i++) dst[i] = src[i];
+      }
     }
   }
 }
@@ -1416,6 +1448,15 @@ private:
   PBullet pbullets_[40];
   EBullet ebullets_[72];
   Particle particles_[48];
+  /* baked GVRAM explosion effects (explosion_fx.h): fixed pool,
+     age advances in the update, pixels are managed in render_play */
+  struct FxInst {
+    bool active = false;
+    int kind = 0, x = 0, y = 0, age = 0, drawn = -1;
+    bool epend = false;               /* overwritten while drawn: */
+    int ekind = 0, ex = 0, ey = 0, eframe = -1;  /* erase this first */
+  };
+  FxInst fx_[10];
   Capsule capsules_[6];
   Decor decors_[4];
 
@@ -1708,6 +1749,7 @@ private:
     blit_keyed(SHIP_B_IMG, SHIP_B_W, SHIP_B_H, SHIP_B_X, SHIP_B_Y);
   }
   void to_title() {
+    clear_fx();
     if (bg_cache_has_earth) { bg_restore_plain_rect(); bg_cache_has_earth = false; }
     demo_mode_ = false; title_idle_ = 0;
     sprites_set_visible(false);
@@ -1801,6 +1843,50 @@ private:
                      (i % 3 == 0) ? 11 : (i % 3 == 1) ? 2 : 3);
     }
     g_fm.se(big ? 38 : 46, true);
+  }
+  /* enemy explosions: baked pixelfx bursts (firework for normal
+     enemies, warm plasma for the boss). The explosion sound
+     matches the old explode_at voicing. */
+  void spawn_fx(int x, int y, int kind) {
+    g_fm.se(kind == FX_FW_S ? 46 : 38, true);
+    FxInst *slot = nullptr;
+    for (int i = 0; i < 10; i++)
+      if (!fx_[i].active && fx_[i].drawn < 0 && !fx_[i].epend) { slot = &fx_[i]; break; }
+    if (!slot) {   /* pool full: steal the oldest active instance */
+      int bo = -1;
+      for (int i = 0; i < 10; i++)
+        if (fx_[i].active && fx_[i].age > bo) { slot = &fx_[i]; bo = fx_[i].age; }
+    }
+    if (!slot) slot = &fx_[0];
+    if (slot->drawn >= 0) {   /* snapshot the erase before reuse */
+      slot->epend = true; slot->ekind = slot->kind;
+      slot->ex = slot->x; slot->ey = slot->y; slot->eframe = slot->drawn;
+      slot->drawn = -1;
+    }
+    slot->active = true; slot->kind = kind; slot->x = x; slot->y = y; slot->age = 0;
+  }
+  /* per-frame pixel management for the explosion pool: retire the
+     previously drawn frame (restore from the bg cache), then stamp
+     the current one. Runs before the laser pass so the beam draws
+     over explosions, never the other way round. */
+  void draw_fx() {
+    for (int i = 0; i < 10; i++) {
+      FxInst &f = fx_[i];
+      if (f.epend) { fx_blit(FX_KINDS[f.ekind], f.ex, f.ey, f.eframe, true); f.epend = false; }
+      int want = f.active ? (f.age >> 1) : -1;
+      if (want >= FX_FRAMES) want = FX_FRAMES - 1;
+      if (f.drawn >= 0 && f.drawn != want) {
+        fx_blit(FX_KINDS[f.kind], f.x, f.y, f.drawn, true);
+        f.drawn = -1;
+      }
+      if (want >= 0 && f.drawn != want) {
+        fx_blit(FX_KINDS[f.kind], f.x, f.y, want, false);
+        f.drawn = want;
+      }
+    }
+  }
+  void clear_fx() {
+    for (int i = 0; i < 10; i++) { fx_[i].active = false; fx_[i].drawn = -1; fx_[i].epend = false; }
   }
   /* ---------------- hardware sprites ---------------- */
   void sprites_init() {
@@ -1987,7 +2073,7 @@ private:
     if (e.hp > 0) return;
     e.active = false;
     add_score(enemy_score(e.type));
-    explode_at(e.x, e.y, e.type >= 3 ? 22 : 10, e.type >= 3 ? 1 : 0);
+    spawn_fx(e.x, e.y, e.type >= 3 ? FX_FW_M : FX_FW_S);
     if (e.type == 3) { /* prism crystal: feeds resonance */
       resonance_ += 220; if (resonance_ > 1000) resonance_ = 1000;
       for (int i = 0; i < 10; i++) {
@@ -2007,7 +2093,7 @@ private:
       if (dx * dx + dy * dy < 16 * 16) {
         shard_hp_[i] -= dmg; shard_flash_[i] = 3;
         if (shard_hp_[i] <= 0) {
-          add_score(800); explode_at(shard_x_[i], shard_y_[i], 18, 1);
+          add_score(800); spawn_fx(shard_x_[i], shard_y_[i], FX_PL_M);
           drop_item(shard_x_[i], shard_y_[i]);
         }
         return true;
@@ -2020,7 +2106,7 @@ private:
       if (boss_core_hp_ <= 0 && phase_ == Phase::Boss) {
         phase_ = Phase::BossDying; boss_dying_t_ = 215;
         add_score(10000);
-        explode_at(boss_x_, boss_y_, 30, 1);
+        spawn_fx(boss_x_, boss_y_, FX_PL_M);
         for (int i = 0; i < 72; i++) ebullets_[i].active = false;
       }
       return true;
@@ -2240,6 +2326,8 @@ private:
     }
   }
   void update_particles_capsules_decor() {
+    for (int i = 0; i < 10; i++)
+      if (fx_[i].active && ++fx_[i].age >= FX_FRAMES * 2) fx_[i].active = false;
     for (int i = 0; i < 48; i++) {
       Particle &p = particles_[i]; if (!p.active) continue;
       if (--p.life <= 0) { p.active = false; continue; }
@@ -2404,6 +2492,8 @@ private:
       }
       return;
     }
+    /* ---- baked explosion effects on GVRAM (under the laser) ---- */
+    draw_fx();
     /* ---- bending laser on GVRAM (run-based erase + draw) ---- */
     {
       int halfw = prism_t_ > 0 ? 2 : 1;
@@ -2641,6 +2731,7 @@ private:
     for (int i = 0; i < 6; i++) capsules_[i].drawn = false;
     for (int i = 0; i < 4; i++) { decors_[i].drawn = false; shard_drawn_[i] = false; }
     player_drawn_ = false; boss_drawn_ = false; pseg_n_ = 0;
+    clear_fx();
   }
   void start_game() {
     for (int i = 0; i < 20; i++) enemies_[i].active = false;
@@ -2673,7 +2764,7 @@ private:
   void start_warn() {
     phase_ = Phase::Warn; warn_t_ = 190; music_ = 1; warn_overlay_ = true;
     for (int i = 0; i < 20; i++) if (enemies_[i].active) {
-      explode_at(enemies_[i].x, enemies_[i].y, 8, 0); enemies_[i].active = false;
+      spawn_fx(enemies_[i].x, enemies_[i].y, FX_FW_S); enemies_[i].active = false;
     }
     start_jingle(JINGLE_WARN);
   }
@@ -2794,12 +2885,11 @@ private:
           if (el < 110) {
             /* escalating barrage + screen shake, boss still on screen */
             shake_amp_ = 1 + el / 22;
-            if ((frame_ % 3) == 0)
-              explode_at(boss_x_ + rand_mod(80) - 40,
-                         boss_y_ + rand_mod(80) - 40,
-                         (el % 9 == 0) ? 14 : 8, 1);
+            if ((el % 6) == 0)
+              spawn_fx(boss_x_ + rand_mod(80) - 40,
+                       boss_y_ + rand_mod(80) - 40, FX_PL_M);
             if (el == 109) {   /* the final blast */
-              explode_at(boss_x_, boss_y_, 40, 1);
+              spawn_fx(boss_x_, boss_y_, FX_PL_L);
               for (int i = 0; i < 24; i++) {
                 int a = i * 64 / 24;
                 spawn_particle(boss_x_, boss_y_, cos64(a) * 5,
@@ -2812,6 +2902,10 @@ private:
             shake_amp_ = 0;
             sprites_set_visible(false);
             sp_hide_all();
+          } else if (el == 162) {
+            /* the whiteout has wiped the background back in: the
+               big bloom gets its full run here */
+            spawn_fx(boss_x_, boss_y_, FX_PL_L);
           }
           if (--boss_dying_t_ <= 0) {
             shake_amp_ = 0;
