@@ -445,6 +445,7 @@ public:
 /* stars: static screen positions, twinkle by changing brightness */
 static constexpr int STAR_N = 380;
 static int star_x[STAR_N], star_y[STAR_N], star_b[STAR_N];
+static void scroll_init();   /* defined with the scroll pass below */
 static constexpr int EARTH_CX = 388, EARTH_CY = 238, EARTH_R = 88;
 static void stars_init() {
   uint32_t s = 0x9E3779B9u;
@@ -468,6 +469,126 @@ static uint16_t star_color(int b, int tw) {
     case 3: return GRB(16, 18, 23);
     case 4: return GRB(22, 24, 28);
     default: return GRB(28, 29, 30);
+  }
+}
+/* The colour a star is drawn with, shared by the cache bake and the
+   dynamic scroll pass: warm tint every 9th star, cyan every 7th. */
+static uint16_t star_draw_color(int i) {
+  int v = star_b[i];
+  if (i % 9 == 0) {
+    static const uint16_t warm[5] = {GRB(6, 5, 3), GRB(10, 9, 5), GRB(15, 13, 7),
+                                     GRB(21, 18, 10), GRB(27, 23, 14)};
+    return warm[v];
+  }
+  if (i % 7 == 0) {
+    static const uint16_t cyan[5] = {GRB(3, 6, 8), GRB(5, 11, 13), GRB(7, 16, 19),
+                                     GRB(10, 22, 25), GRB(13, 27, 30)};
+    return cyan[v];
+  }
+  return star_color(v, 0);
+}
+static uint16_t star_arm_color(uint16_t c) {  /* half-bright sparkle arms */
+  return GRB(((c >> 6) & 31) / 2, ((c >> 11) & 31) / 2, ((c >> 1) & 31) / 2);
+}
+
+/* ---- pseudo-parallax scroll (prototype) ----
+   In-field stars (PLAY_Y0..PLAY_Y1) are not baked into the cache;
+   they are plotted on GVRAM every frame with a speed per brightness
+   tier, plus a near layer of fast dust motes. The far layer is the
+   static cache (nebula + Earth). Erase and plot are both guarded by
+   read-back checks -- erase only a pixel that still shows the star
+   colour, plot only onto a pixel that still shows the plain cache --
+   so the moving points coexist with every persistent GVRAM element
+   (laser runs, fx spans, overlays) in any draw order. Stars never
+   plot inside the Earth disc: they pass behind the planet. */
+static constexpr int DUST_N = 36;
+static int star_fx[STAR_N];   /* fixed-point x, 1/64 px */
+static int star_sx[STAR_N];   /* last plotted screen x */
+static int dust_fx[DUST_N], dust_y[DUST_N], dust_v[DUST_N], dust_sx[DUST_N];
+static uint32_t dust_rng = 0x1F123BB5u;   /* private stream: gameplay PRNG untouched */
+static int scroll_v8 = 0;                 /* base velocity in 1/8 units; cruise = 24 */
+static const int STAR_SPD[5] = {1, 2, 3, 5, 8};
+static bool star_in_field(int i) { return star_y[i] >= PLAY_Y0 && star_y[i] <= PLAY_Y1; }
+static void scroll_init() {
+  for (int i = 0; i < STAR_N; i++) { star_fx[i] = star_x[i] * 64; star_sx[i] = star_x[i]; }
+  for (int i = 0; i < DUST_N; i++) {
+    dust_rng = dust_rng * 1103515245u + 12345u;
+    dust_fx[i] = (int)((dust_rng >> 8) % (SCR_W * 64));
+    dust_rng = dust_rng * 1103515245u + 12345u;
+    dust_y[i] = PLAY_Y0 + (int)((dust_rng >> 8) % (PLAY_Y1 - PLAY_Y0));
+    dust_rng = dust_rng * 1103515245u + 12345u;
+    dust_v[i] = 88 + (int)((dust_rng >> 8) % 48);
+    dust_sx[i] = dust_fx[i] >> 6;
+  }
+}
+static bool earth_occludes(int x, int y) {
+  int dx = x - EARTH_CX, dy = y - EARTH_CY;
+  return dx * dx + dy * dy < 92 * 92;
+}
+static void spx_erase(int x, int y, uint16_t expect) {
+  if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
+  volatile uint16_t *p = GVRAM + y * GV_STRIDE + x;
+  if (*p == expect) *p = bg_cache[y][x];
+}
+static void spx_plot(int x, int y, uint16_t c) {
+  if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
+  if (earth_occludes(x, y)) return;
+  volatile uint16_t *p = GVRAM + y * GV_STRIDE + x;
+  if (*p == bg_cache[y][x]) *p = c;
+}
+static bool star_sparkle(int i) { return star_b[i] == 4 && i % 3 == 0; }
+static void star_erase_one(int i) {
+  uint16_t c = star_draw_color(i);
+  int x = star_sx[i], y = star_y[i];
+  spx_erase(x, y, c);
+  if (star_sparkle(i)) {
+    uint16_t h = star_arm_color(c);
+    spx_erase(x - 1, y, h); spx_erase(x + 1, y, h);
+    spx_erase(x, y - 1, h); spx_erase(x, y + 1, h);
+  }
+}
+static void star_plot_one(int i) {
+  uint16_t c = star_draw_color(i);
+  int x = star_sx[i], y = star_y[i];
+  spx_plot(x, y, c);
+  if (star_sparkle(i)) {
+    uint16_t h = star_arm_color(c);
+    spx_plot(x - 1, y, h); spx_plot(x + 1, y, h);
+    spx_plot(x, y - 1, h); spx_plot(x, y + 1, h);
+  }
+}
+static void stars_plot_all() {   /* title screen: frozen positions */
+  for (int i = 0; i < STAR_N; i++) if (star_in_field(i)) star_plot_one(i);
+}
+static void stars_scroll_frame(int target_v8) {
+  if (scroll_v8 < target_v8) scroll_v8++;
+  else if (scroll_v8 > target_v8) scroll_v8--;
+  for (int i = 0; i < STAR_N; i++) {
+    if (!star_in_field(i)) continue;
+    star_erase_one(i);
+    star_fx[i] -= scroll_v8 * STAR_SPD[star_b[i]] / 8;
+    if (star_fx[i] < 0) star_fx[i] += SCR_W * 64;
+    star_sx[i] = star_fx[i] >> 6;
+    star_plot_one(i);
+  }
+  static const uint16_t DUST_C = GRB(15, 19, 23), DUST_A = GRB(7, 10, 12);
+  for (int i = 0; i < DUST_N; i++) {
+    int x = dust_sx[i], y = dust_y[i];
+    spx_erase(x, y, DUST_C);
+    spx_erase(x - 1, y, DUST_A); spx_erase(x + 1, y, DUST_A);
+    spx_erase(x, y - 1, DUST_A); spx_erase(x, y + 1, DUST_A);
+    dust_fx[i] -= dust_v[i] * scroll_v8 / 24;
+    if (dust_fx[i] < -4 * 64) {   /* respawn at the right edge */
+      dust_fx[i] = (SCR_W + 4) * 64;
+      dust_rng = dust_rng * 1103515245u + 12345u;
+      dust_y[i] = PLAY_Y0 + (int)((dust_rng >> 8) % (PLAY_Y1 - PLAY_Y0));
+      y = dust_y[i];
+    }
+    dust_sx[i] = dust_fx[i] >> 6;
+    x = dust_sx[i];
+    spx_plot(x, y, DUST_C);
+    spx_plot(x - 1, y, DUST_A); spx_plot(x + 1, y, DUST_A);
+    spx_plot(x, y - 1, DUST_A); spx_plot(x, y + 1, DUST_A);
   }
 }
 
@@ -540,20 +661,12 @@ static void build_bg_cache() {
   }
   /* starfield: white-blue levels, a few warm / cyan, sparkle crosses */
   for (int i = 0; i < STAR_N; i++) {
+    if (star_in_field(i)) continue;  /* dynamic layer: plotted per frame */
     int v = star_b[i];
-    uint16_t c = star_color(v, 0);
-    if (i % 9 == 0) {
-      static const uint16_t warm[5] = {GRB(6, 5, 3), GRB(10, 9, 5), GRB(15, 13, 7),
-                                       GRB(21, 18, 10), GRB(27, 23, 14)};
-      c = warm[v];
-    } else if (i % 7 == 0) {
-      static const uint16_t cyan[5] = {GRB(3, 6, 8), GRB(5, 11, 13), GRB(7, 16, 19),
-                                       GRB(10, 22, 25), GRB(13, 27, 30)};
-      c = cyan[v];
-    }
+    uint16_t c = star_draw_color(i);
     bg_cache[star_y[i]][star_x[i]] = c;
     if (v == 4 && i % 3 == 0) {  /* brightest: plus sparkle */
-      uint16_t h = GRB(((c >> 6) & 31) / 2, ((c >> 11) & 31) / 2, ((c >> 1) & 31) / 2);
+      uint16_t h = star_arm_color(c);
       if (star_x[i] > 0) bg_cache[star_y[i]][star_x[i] - 1] = h;
       if (star_x[i] < SCR_W - 1) bg_cache[star_y[i]][star_x[i] + 1] = h;
       if (star_y[i] > 0) bg_cache[star_y[i] - 1][star_x[i]] = h;
@@ -1531,6 +1644,7 @@ public:
     load_caption();
     load_progress(0);
     stars_init();
+    scroll_init();
     load_progress(3);
     build_bg_cache();
     load_progress(68);
@@ -1955,6 +2069,7 @@ private:
     bgm_on_ = true; music_ = 2; bgm_step_ = 0; bgm_timer_ = 0;
     title_cycle_ = 0;
     draw_background();
+    stars_plot_all();
     draw_title_logo();
     Gfx::fill(0, 286, 511, 311, GRB(1, 2, 7));
     Gfx::text_center_adv(290, 2, 14, GRB(14, 28, 28), "BEND THE LASER - FEED THE RESONANCE");
@@ -2690,6 +2805,8 @@ private:
       }
       return;
     }
+    /* ---- pseudo-parallax: star layers + near dust (under all else) ---- */
+    stars_scroll_frame(phase_ == Phase::Normal ? 24 : 0);
     /* ---- baked explosion effects on GVRAM (under the laser) ---- */
     draw_fx();
     /* ---- bending laser on GVRAM (run-based erase + draw) ---- */
@@ -3046,6 +3163,7 @@ private:
       case State::Title: {
         bool vis = (frame_ % 84) < 55;
         if (vis != press_visible_) { press_visible_ = vis; draw_press(vis); }
+        stars_plot_all();   /* heal any stars the blink erase covered */
         if (in.esc) {
           g_fm.all_off(); draw_background();
           Gfx::text_center(220, 3, GRB(10, 26, 30), "THANK YOU!");
