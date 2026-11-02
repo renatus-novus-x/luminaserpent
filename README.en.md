@@ -60,6 +60,14 @@ drones), **HALO** (shield), plus bonus stars.
   (slow tempo, long floating tones), an active 8th-note arpeggio
   theme in game, and a driving synthwave boss theme; sound effects
   and jingles on separate channels
+- Baked explosion effects: enemy explosions are pre-rendered
+  animations from the pixelfx pixel-art VFX library (MIT, (c) Patch,
+  https://github.com/patch-gg/pixelfx), recolored to a warm ramp —
+  firework bursts for normal enemies, plasma fireballs for the boss
+  (shards, the dying barrage, the final blast and the post-whiteout
+  bloom). Four span-encoded animations (15 frames each, 230 KB) in
+  `explosion_fx.h`; the total footprint stays within 1 MB RAM
+  machines (1,027,197 bytes of text+data+bss)
 - Attract mode: leave the title screen alone for about 5 seconds and
   an AI demo game starts (invincible, can finish the boss; any key
   returns to the title, demo scores never touch the hi-score)
@@ -123,12 +131,14 @@ and emits the tile header.
 | `earth_bg.h` | Pre-rendered Earth tile (105×105, GRB555) |
 | `logo_title_b.h` | Title logo outline mask (1-bit, PackBits) + beam ship |
 | `title_earth.h` | Pre-rendered title Earth disc (168×118, blitted 2x, GRB555) |
+| `explosion_fx.h` | Baked explosion animations (pixelfx firework-burst + plasma-explosion, warm-recolored, span-encoded) |
 | `Makefile` | Build rules (see above) |
 | `tools/make_boot_xdf.py` | Builds the standalone boot disk (game as HUMAN.SYS) |
 | `tools/make_x_xdf.py` | Builds the Human68k disk with the .X executable |
 | `tools/earth_gen.cpp` | Host build of the background generator (asset tool) |
 | `tools/gen_earth_tile.py` | Renders the background and emits `earth_bg.h` |
 | `tools/gen_title_b.py` | Renders the title logo mask / Earth disc and emits `logo_title_b.h` / `title_earth.h` |
+| `tools/gen_explosion.py` | Bakes the pixelfx explosion effects and emits `explosion_fx.h` |
 | `README.md` | Japanese README (main) with design and optimization notes |
 | `dist/luminaserpent.xdf` | Bootable disk image (included) |
 | `images/teaser.gif` | Animated teaser (gameplay) |
