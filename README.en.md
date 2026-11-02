@@ -67,7 +67,12 @@ drones), **HALO** (shield), plus bonus stars.
   (shards, the dying barrage, the final blast and the post-whiteout
   bloom). Four span-encoded animations (15 frames each, 230 KB) in
   `explosion_fx.h`; the total footprint stays within 1 MB RAM
-  machines (1,027,197 bytes of text+data+bss)
+  machines (1,037,374 bytes of text+data+bss)
+- Refreshed sprites: the ship, options, item capsules and shots
+  are ported from the MSX version's artwork, while enemies, the
+  carrier, the boss and its shards use redrawn art with outlines
+  and stronger contrast; the PRISM beam now draws behind
+  everything else so enemies and their bullets stay readable
 - Attract mode: leave the title screen alone for about 5 seconds and
   an AI demo game starts (invincible, can finish the boss; any key
   returns to the title, demo scores never touch the hi-score)
@@ -139,6 +144,7 @@ and emits the tile header.
 | `tools/gen_earth_tile.py` | Renders the background and emits `earth_bg.h` |
 | `tools/gen_title_b.py` | Renders the title logo mask / Earth disc and emits `logo_title_b.h` / `title_earth.h` |
 | `tools/gen_explosion.py` | Bakes the pixelfx explosion effects and emits `explosion_fx.h` |
+| `tools/gen_sprite_maps.py` | Quantizes the MSX artwork into sprite maps for the ship, options, capsules and shots |
 | `README.md` | Japanese README (main) with design and optimization notes |
 | `dist/luminaserpent.xdf` | Bootable disk image (included) |
 | `images/teaser.gif` | Animated teaser (gameplay) |
