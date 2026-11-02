@@ -53,7 +53,7 @@ elf2x68k (m68k-xelf-gcc/g++ 13.5.0) で作った、完全オリジナルの
 
 | ファイル | 内容 |
 |---|---|
-| `luminaserpent.sys` | 本体（ブート用システムバイナリ、387,876 bytes） |
+| `luminaserpent.sys` | 本体（ブート用システムバイナリ、387,524 bytes） |
 | `luminaserpent.xdf` | ブート用ディスクイメージ。中身は HUMAN.SYS のみ |
 | `luminaserpent.x` | おまけ: Human68k 用 .X 版（同じソースからビルド） |
 | `luminaserpent-test.xdf` | 検証専用: レーザー装備済み＋ボス付近から開始するテスト版 |
@@ -227,8 +227,12 @@ make test       # luminaserpent-test.xdf (検証用)
   （マップ生成は `tools/gen_sprite_maps.py`）。
   あわせて PRISM ビームのスプライト優先度を最後尾へ移し、
   敵・ボス・敵弾がビームの手前に描画されるよう変更。
-  総フットプリント（text+data+bss）は 1,037,374 bytes で
+  総フットプリント（text+data+bss）は 1,037,030 bytes で
   1MB 予算内
+- ロード画面の進捗％表示を廃止（2026-11-02）：バーの右に
+  出していた％数字は 8×8 フォントの字形（斜線入りの 0 など）が
+  小さな画面では判読できないため、NOW LOADING とバーだけの
+  表示に変更
 - 再ビルド一致：`make clean` からの再ビルドで `luminaserpent.sys`
-  (387,876 bytes, MD5 `f0edfe99ac423368af8fd292ea1c060b`) と XDF
-  (MD5 `a12a0324e0555ad96dfb82b9e6b0b3a0`) がバイト単位で一致
+  (387,524 bytes, MD5 `456cd43edad90911bc8cc3fbe0a4bab8`) と XDF
+  (MD5 `0eb112a542b8f034fe579d252336c542`) がバイト単位で一致
