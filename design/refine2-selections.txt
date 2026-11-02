@@ -1,0 +1,5 @@
+G1 (ship+option): B (MSX-direct)
+G2 (small enemies): C (outline + contrast)
+G3 (large enemies): C (outline + contrast)
+G4 (boss+shard): C (outline + contrast)
+G5 (items/shots/effects): B (MSX-direct)
