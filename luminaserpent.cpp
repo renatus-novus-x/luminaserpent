@@ -604,16 +604,17 @@ static void bg_compose_earth() {
   }
 }
 
-/* NOW LOADING progress bar (boot only): dark track + cyan fill +
-   percent number. Called from the boot steps in Game::run and from
-   the two long boot loops (background bake, sprite pattern bake). */
+/* NOW LOADING progress bar (boot only): dark track + cyan fill.
+   No percent number: at 8x8 scale 1 the digits read as garbled
+   boxes on small screens, so the bar alone shows progress.
+   Called from the boot steps in Game::run and from the two long
+   boot loops (background bake, sprite pattern bake). */
 static void load_progress(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   Gfx::fill(158, 234, 354, 244, GRB(1, 2, 5));
   int w = pct * 196 / 100;
   if (w > 0) Gfx::fill(158, 234, 158 + w - 1, 244, GRB(0, 24, 27));
-  Gfx::number(364, 234, 1, GRB(16, 22, 26), pct, 3);
 }
 static uint16_t shade(uint16_t c, int d) {
   int r = ((c >> 6) & 31) + d, g = ((c >> 11) & 31) + d, b = ((c >> 1) & 31) + d;
