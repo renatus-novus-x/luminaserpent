@@ -504,12 +504,20 @@ static uint16_t star_arm_color(uint16_t c) {  /* half-bright sparkle arms */
    Cost control: a star touches GVRAM only on frames where its
    screen x actually changes (the slowest tier moves 1 px per ~21
    frames), colours and the in-field index list are precomputed at
-   boot, and a rotating audit re-plots 24 stars per frame so pixels
-   wiped by overlay restores heal within ~13 frames. Disabled by
-   default because the unoptimised pass cost too much frame time;
-   build with PARALLAX=1 (see the Makefile) to enable. */
+   boot, per-frame step sizes are tabled (rebuilt only when the
+   scroll speed changes) instead of a multiply+divide per star,
+   Earth occlusion is a per-row chord lookup instead of two
+   multiplies per plotted point, the dust motes are single pixels,
+   and a rotating audit re-plots 12 stars per frame so pixels
+   wiped by overlay restores heal within ~25 frames.
+   Third optimisation: only tiers 2..4 are dynamic -- the two
+   slowest tiers (1 px per ~11-21 frames) stay baked into the
+   cache like the out-of-field stars; dynamic stars are single
+   points (no sparkle crosses, which cost 5x the touches); the
+   dust layer is 10 motes. Disabled by default; build with
+   PARALLAX=1 (see the Makefile) to enable. */
 #ifdef PARALLAX_SCROLL
-static constexpr int DUST_N = 28;
+static constexpr int DUST_N = 10;
 static int star_fx[STAR_N];   /* fixed-point x, 1/64 px */
 static int star_sx[STAR_N];   /* last plotted screen x */
 static uint16_t star_col[STAR_N], star_arm[STAR_N];
@@ -519,13 +527,30 @@ static uint32_t dust_rng = 0x1F123BB5u;   /* private stream: gameplay PRNG untou
 static int scroll_v8 = 0;                 /* base velocity in 1/8 units; cruise = 24 */
 static int audit_pos = 0;
 static const int STAR_SPD[5] = {1, 2, 3, 5, 8};
+/* Per-frame step tables, rebuilt only when scroll_v8 changes: the
+   movers loop must not pay a multiply+divide per star per frame. */
+static int tier_step[5] = {0, 0, 0, 0, 0};
+static int dust_step[DUST_N];
+static int steps_v8 = -1;
+/* Earth occlusion without multiplies: per play-field row, the
+   half-chord of the r=92 occlusion disc (0 = the row never meets
+   the disc). Conservative by under 1 px (ceil of the true root). */
+static int row_chord[PLAY_Y1 + 1];
+static void scroll_steps_rebuild() {
+  steps_v8 = scroll_v8;
+  for (int t = 0; t < 5; t++) tier_step[t] = scroll_v8 * STAR_SPD[t] / 8;
+  for (int i = 0; i < DUST_N; i++) dust_step[i] = dust_v[i] * scroll_v8 / 24;
+}
 static bool star_in_field(int i) { return star_y[i] >= PLAY_Y0 && star_y[i] <= PLAY_Y1; }
 static void scroll_init() {
   for (int i = 0; i < STAR_N; i++) {
     star_fx[i] = star_x[i] * 64; star_sx[i] = star_x[i];
     star_col[i] = star_draw_color(i);
     star_arm[i] = star_arm_color(star_col[i]);
-    if (star_in_field(i)) field_idx[field_n++] = i;
+    /* opt3: the two slowest tiers crawl (1 px per ~11-21 frames);
+       they stay baked into the cache (see the bake loop) and never
+       enter the movers list. Only tiers 2..4 are dynamic. */
+    if (star_in_field(i) && star_b[i] >= 2) field_idx[field_n++] = i;
   }
   for (int i = 0; i < DUST_N; i++) {
     dust_rng = dust_rng * 1103515245u + 12345u;
@@ -536,6 +561,15 @@ static void scroll_init() {
     dust_v[i] = 88 + (int)((dust_rng >> 8) % 48);
     dust_sx[i] = dust_fx[i] >> 6;
   }
+  for (int y = PLAY_Y0; y <= PLAY_Y1; y++) {
+    int dy = y - EARTH_CY;
+    int rem = 92 * 92 - dy * dy;
+    if (rem <= 0) { row_chord[y] = 0; continue; }
+    int w = 0;
+    while ((w + 1) * (w + 1) <= rem) w++;
+    row_chord[y] = w + 1;   /* ceil: never plot onto the planet */
+  }
+  scroll_steps_rebuild();
 }
 static bool earth_occludes(int x, int y) {
   int dx = x - EARTH_CX, dy = y - EARTH_CY;
@@ -552,24 +586,25 @@ static void spx_plot(int x, int y, uint16_t c) {
   volatile uint16_t *p = GVRAM + y * GV_STRIDE + x;
   if (*p == bg_cache[y][x]) *p = c;
 }
-static bool star_sparkle(int i) { return star_b[i] == 4 && i % 3 == 0; }
+/* opt3: dynamic stars are single points. The baked layer keeps its
+   sparkle crosses (they cost nothing per frame), but a moving cross
+   cost 5x the GVRAM touches of a point on every step. */
 static void star_erase_at(int i, int x) {
-  int y = star_y[i];
-  spx_erase(x, y, star_col[i]);
-  if (star_sparkle(i)) {
-    uint16_t h = star_arm[i];
-    spx_erase(x - 1, y, h); spx_erase(x + 1, y, h);
-    spx_erase(x, y - 1, h); spx_erase(x, y + 1, h);
-  }
+  spx_erase(x, star_y[i], star_col[i]);
+}
+static bool row_occludes(int x, int y) {
+  if (y < PLAY_Y0 || y > PLAY_Y1) return earth_occludes(x, y);
+  int w = row_chord[y];
+  return w && x - EARTH_CX < w && EARTH_CX - x < w;
+}
+static void spx_plot_at(int x, int y, uint16_t c) {
+  if (x < 0 || x >= SCR_W || y < 0 || y >= SCR_H) return;
+  if (row_occludes(x, y)) return;
+  volatile uint16_t *p = GVRAM + y * GV_STRIDE + x;
+  if (*p == bg_cache[y][x]) *p = c;
 }
 static void star_plot_at(int i, int x) {
-  int y = star_y[i];
-  spx_plot(x, y, star_col[i]);
-  if (star_sparkle(i)) {
-    uint16_t h = star_arm[i];
-    spx_plot(x - 1, y, h); spx_plot(x + 1, y, h);
-    spx_plot(x, y - 1, h); spx_plot(x, y + 1, h);
-  }
+  spx_plot_at(x, star_y[i], star_col[i]);
 }
 static void stars_plot_all() {   /* title screen: frozen positions */
   for (int k = 0; k < field_n; k++) {
@@ -580,10 +615,11 @@ static void stars_plot_all() {   /* title screen: frozen positions */
 static void stars_scroll_frame(int target_v8) {
   if (scroll_v8 < target_v8) scroll_v8++;
   else if (scroll_v8 > target_v8) scroll_v8--;
+  if (steps_v8 != scroll_v8) scroll_steps_rebuild();
   /* movers: touch GVRAM only when the screen position changes */
   for (int k = 0; k < field_n; k++) {
     int i = field_idx[k];
-    star_fx[i] -= scroll_v8 * STAR_SPD[star_b[i]] / 8;
+    star_fx[i] -= tier_step[star_b[i]];
     if (star_fx[i] < 0) star_fx[i] += SCR_W * 64;
     int nsx = star_fx[i] >> 6;
     if (nsx != star_sx[i]) {
@@ -594,16 +630,16 @@ static void stars_scroll_frame(int target_v8) {
   }
   /* audit: re-plot a rotating slice (plot-checks make this a no-op
      for stars already on screen) so wiped stars heal */
-  for (int n = 0; n < 24 && field_n > 0; n++) {
+  for (int n = 0; n < 12 && field_n > 0; n++) {
     int i = field_idx[audit_pos];
     star_plot_at(i, star_sx[i]);
     if (++audit_pos >= field_n) audit_pos = 0;
   }
   if (scroll_v8 == 0) return;   /* dust freezes with everything else */
-  static const uint16_t DUST_C = GRB(15, 19, 23), DUST_A = GRB(7, 10, 12);
+  static const uint16_t DUST_C = GRB(15, 19, 23);
   for (int i = 0; i < DUST_N; i++) {
     int ox = dust_sx[i], oy = dust_y[i];
-    dust_fx[i] -= dust_v[i] * scroll_v8 / 24;
+    dust_fx[i] -= dust_step[i];
     bool respawn = dust_fx[i] < -4 * 64;
     if (respawn) {   /* respawn at the right edge */
       dust_fx[i] = (SCR_W + 4) * 64;
@@ -611,15 +647,10 @@ static void stars_scroll_frame(int target_v8) {
       dust_y[i] = PLAY_Y0 + (int)((dust_rng >> 8) % (PLAY_Y1 - PLAY_Y0));
     }
     int nsx = dust_fx[i] >> 6;
-    if (nsx != ox || respawn) {
+    if (nsx != ox || respawn) {   /* single-pixel motes: 1 erase + 1 plot */
       spx_erase(ox, oy, DUST_C);
-      spx_erase(ox - 1, oy, DUST_A); spx_erase(ox + 1, oy, DUST_A);
-      spx_erase(ox, oy - 1, DUST_A); spx_erase(ox, oy + 1, DUST_A);
       dust_sx[i] = nsx;
-      int x = nsx, y = dust_y[i];
-      spx_plot(x, y, DUST_C);
-      spx_plot(x - 1, y, DUST_A); spx_plot(x + 1, y, DUST_A);
-      spx_plot(x, y - 1, DUST_A); spx_plot(x, y + 1, DUST_A);
+      spx_plot_at(nsx, dust_y[i], DUST_C);
     }
   }
 }
@@ -695,7 +726,9 @@ static void build_bg_cache() {
   /* starfield: white-blue levels, a few warm / cyan, sparkle crosses */
   for (int i = 0; i < STAR_N; i++) {
 #ifdef PARALLAX_SCROLL
-    if (star_in_field(i)) continue;  /* dynamic layer: plotted per frame */
+    /* dynamic layer: in-field tiers 2..4 are plotted per frame;
+       in-field tiers 0..1 crawl so slowly they stay baked (opt3) */
+    if (star_in_field(i) && star_b[i] >= 2) continue;
 #endif
     int v = star_b[i];
     uint16_t c = star_draw_color(i);
