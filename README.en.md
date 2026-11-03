@@ -54,10 +54,15 @@ drones), **HALO** (shield), plus bonus stars.
   Earth (about 1/3 of the screen) with procedural continents, cloud
   bands, a polar cap and an atmosphere rim. The planet is pre-rendered
   into a tile on the host (`earth_bg.h`) — generating it on a 68000 at
-  boot took minutes, so the machine only blits it. (A pseudo-parallax
-  scrolling starfield exists in the source as an opt-in build,
-  `make PARALLAX=1`, but is disabled by default: its per-frame cost
-  was too high, so the shipped build keeps the static starfield.)
+  boot took minutes, so the machine only blits it. The shipped build
+  layers a pseudo-parallax starfield over it: in-field stars drift
+  at five brightness-tiered speeds, plus a near layer of dust motes.
+  It began as an opt-in experiment because its per-frame cost was
+  too high; after repeated optimization (tabled step sizes, the two
+  slowest tiers left baked into the static layer, single-point
+  moving stars, ten dust motes) the cost is practical, so the
+  distributed image enables it. The source still defaults to off;
+  `make PARALLAX=1` matches the shipped build.
 - YM2151 (OPM) sound driven directly via IOCS, with three BGM
   patterns switched by scene: a quiet ambient theme on the title
   (slow tempo, long floating tones), an active 8th-note arpeggio
@@ -70,7 +75,7 @@ drones), **HALO** (shield), plus bonus stars.
   (shards, the dying barrage, the final blast and the post-whiteout
   bloom). Four span-encoded animations (15 frames each, 230 KB) in
   `explosion_fx.h`; the total footprint stays within 1 MB RAM
-  machines (1,037,798 bytes of text+data+bss)
+  machines (1,046,966 bytes of text+data+bss)
 - Refreshed sprites: the ship, options, item capsules and shots
   are ported from the MSX version's artwork, while enemies, the
   carrier, the boss and its shards use redrawn art with outlines
