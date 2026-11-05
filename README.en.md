@@ -156,3 +156,9 @@ and emits the tile header.
 | `README.md` | Japanese README (main) with design and optimization notes |
 | `dist/luminaserpent.xdf` | Bootable disk image (included) |
 | `images/teaser.gif` | Animated teaser (gameplay) |
+
+## Development
+
+This project is built and verified with assistance from Muse, Meta's personal AI agent — including build automation, emulator testing, and documentation.
+
+If you're curious what a personal agent can do, try Muse here: https://muse.ai/join — enter my invite code **RARMB6** under Settings > Redeem within 48 hours of joining, and we'll both get bonus tokens.
