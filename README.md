@@ -249,3 +249,9 @@ make test       # luminaserpent-test.xdf (検証用)
   `luminaserpent.sys` (389,776 bytes, MD5
   `95d08e0ca6487b11065f7f6253356d03`) と XDF (MD5
   `aed0887ebaf9c8b55addf3a91e56dd86`) がバイト単位で一致
+
+## 開発について
+
+本プロジェクトの開発（ビルド、エミュレータでの検証、ドキュメント整備）には、Meta のパーソナル AI エージェント Muse を活用しています。
+
+パーソナルエージェントに興味があれば、こちらから Muse を試せます： https://muse.ai/join （参加後48時間以内に「設定」のコード入力で **RARMB6** を使うと、あなたと私の両方にボーナストークンが付きます）
